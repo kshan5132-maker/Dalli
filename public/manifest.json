@@ -1,0 +1,9 @@
+{
+  "name": "Dalli",
+  "short_name": "Dalli",
+  "description": "함께하면 더 쉬운 루틴 인증",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#6366F1"
+}

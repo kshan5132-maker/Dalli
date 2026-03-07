@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install @supabase/ssr)",
+      "Bash(npx next build)"
+    ]
+  }
+}
