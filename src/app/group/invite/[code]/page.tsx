@@ -28,11 +28,11 @@ export default function InvitePage({ params }: { params: Promise<{ code: string 
   const loadGroup = async () => {
     try {
       console.log('[Dalli] [Invite] 그룹 조회 시작:', code)
-      const { data: groupData, error: groupError } = await supabase
+      const { data: groupRows, error: groupError } = await supabase
         .from('groups')
         .select('*')
         .eq('invite_code', code.toUpperCase())
-        .maybeSingle()
+      const groupData = groupRows?.[0] || null
       console.log('[Dalli] [Invite] 그룹 조회 완료:', { groupData: !!groupData, groupError })
 
       if (!groupData) {
@@ -51,12 +51,12 @@ export default function InvitePage({ params }: { params: Promise<{ code: string 
       setMemberCount(count || 0)
 
       if (user) {
-        const { data: existing } = await supabase
+        const { data: existingRows } = await supabase
           .from('group_members')
           .select('*')
           .eq('group_id', groupData.id)
           .eq('user_id', user.id)
-          .maybeSingle()
+        const existing = existingRows?.[0] || null
 
         if (existing) {
           setAlreadyMember(true)

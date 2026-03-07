@@ -108,23 +108,23 @@ export default function NewGroupPage() {
       let groupId: string
 
       // Insert group
-      const { data: group, error: insertError } = await supabase
+      const { data: groupRows, error: insertError } = await supabase
         .from('groups')
         .insert(groupPayload)
         .select()
-        .maybeSingle()
+      const group = groupRows?.[0] || null
 
       if (insertError) {
         // Invite code collision retry
         if (insertError.message.includes('invite_code')) {
           const retryCode = generateInviteCode()
-          const { data: retryGroup, error: retryError } = await supabase
+          const { data: retryRows, error: retryError } = await supabase
             .from('groups')
             .insert({ ...groupPayload, invite_code: retryCode })
             .select()
-            .maybeSingle()
+          const retryGroup = retryRows?.[0] || null
 
-          if (retryError) {
+          if (retryError || !retryGroup) {
             setError('그룹 생성에 실패했습니다. 다시 시도해주세요.')
             setLoading(false)
             return
@@ -137,7 +137,7 @@ export default function NewGroupPage() {
           return
         }
       } else {
-        groupId = group.id
+        groupId = group!.id
       }
 
       // Add creator as admin member

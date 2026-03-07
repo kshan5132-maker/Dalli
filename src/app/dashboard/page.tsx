@@ -180,7 +180,8 @@ export default function DashboardPage() {
         for (const groupId of uniqueGroupIds) {
           // Group info
           console.log('[Dalli] [Dashboard] Group 쿼리 시작', groupId)
-          const { data: groupData } = await supabase.from('groups').select('name').eq('id', groupId).maybeSingle()
+          const { data: groupRows } = await supabase.from('groups').select('name').eq('id', groupId)
+          const groupData = groupRows?.[0] || null
           console.log('[Dalli] [Dashboard] Group 쿼리 완료', groupId, groupData?.name)
           if (!groupData) continue
 

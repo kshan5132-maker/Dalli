@@ -79,13 +79,13 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
     try {
       // 1. 루틴 정보 가져오기
       console.log('[Dalli] [RoutineDetail] 루틴 쿼리 시작')
-      const { data: routineData, error: routineError, status: routineStatus } = await supabase
+      const { data: routineRows, error: routineError } = await supabase
         .from('routines')
         .select('*, groups:group_id(*)')
         .eq('id', id)
-        .maybeSingle()
-      console.log('[Dalli] [RoutineDetail] 루틴 쿼리 응답:', { routineData: !!routineData, routineError, routineStatus })
+      console.log('[Dalli] [RoutineDetail] 루틴 쿼리 응답:', { count: routineRows?.length, routineError })
 
+      const routineData = routineRows?.[0] || null
       if (routineError || !routineData) {
         console.error('[Dalli] [RoutineDetail] 루틴 쿼리 에러:', routineError)
         setError(routineError?.message || '루틴을 찾을 수 없습니다.')

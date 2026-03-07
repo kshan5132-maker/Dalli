@@ -75,16 +75,17 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     try {
       console.log('[Dalli] [GroupDetail] group + members 쿼리 시작')
       const [groupRes, membersRes] = await Promise.all([
-        supabase.from('groups').select('*').eq('id', id).maybeSingle(),
+        supabase.from('groups').select('*').eq('id', id),
         supabase.from('group_members').select('*, profiles(*)').eq('group_id', id),
       ])
-      console.log('[Dalli] [GroupDetail] group + members 쿼리 완료')
+      console.log('[Dalli] [GroupDetail] group + members 쿼리 완료:', { groupCount: groupRes.data?.length, membersCount: membersRes.data?.length })
 
-      if (groupRes.error || !groupRes.data) {
+      const groupData = groupRes.data?.[0] || null
+      if (groupRes.error || !groupData) {
         setError('그룹을 찾을 수 없습니다.')
         return
       }
-      setGroup(groupRes.data)
+      setGroup(groupData)
 
       const memberList = (membersRes.data || []) as unknown as (GroupMember & { profiles: Profile })[]
       setMembers(memberList)
@@ -205,11 +206,11 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         },
         async (payload) => {
           // Fetch the full message with profile
-          const { data } = await supabase
+          const { data: msgRows } = await supabase
             .from('messages')
             .select('*, profiles(*)')
             .eq('id', payload.new.id)
-            .maybeSingle()
+          const data = msgRows?.[0] || null
 
           if (data) {
             setMessages((prev) => {

@@ -1,12 +1,11 @@
-import { updateSession } from '@/lib/supabase/middleware'
-import { type NextRequest } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 
-export async function middleware(request: NextRequest) {
-  return await updateSession(request)
+// supabase 서버 호출 제거: 미들웨어에서 getUser() 호출이 매 요청마다 Supabase 서버에 요청을 보내 hang 발생 가능
+// 라우트 보호는 각 페이지에서 getSession()으로 클라이언트에서 처리
+export function middleware(request: NextRequest) {
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
+  matcher: [],
 }

@@ -102,12 +102,12 @@ export default function GroupListPage() {
     setJoinError('')
 
     try {
-      const { data: group, error: groupError } = await supabase
+      const { data: groupRows, error: groupError } = await supabase
         .from('groups')
         .select('id')
         .eq('invite_code', inviteCode.trim().toUpperCase())
-        .maybeSingle()
-      console.log('[Dalli] [Group] 초대코드 조회:', { group, groupError })
+      console.log('[Dalli] [Group] 초대코드 조회:', { count: groupRows?.length, groupError })
+      const group = groupRows?.[0] || null
 
       if (!group) {
         setJoinError('유효하지 않은 초대 코드입니다.')
@@ -115,12 +115,12 @@ export default function GroupListPage() {
         return
       }
 
-      const { data: existing } = await supabase
+      const { data: existingRows } = await supabase
         .from('group_members')
         .select('*')
         .eq('group_id', group.id)
         .eq('user_id', userId)
-        .maybeSingle()
+      const existing = existingRows?.[0] || null
 
       if (existing) {
         setJoinError('이미 참여 중인 그룹입니다.')

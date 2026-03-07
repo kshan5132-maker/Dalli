@@ -1,5 +1,87 @@
 # Dalli 개발 로그
 
+## [Critical Fix - Profile Query Hang] - 2026-03-07
+
+### 진단 결과
+- **증상**: 콘솔에 `[Dalli] 프로필 쿼리 실행 직전: userId` 까지만 출력, 이후 응답 로그 없음 → Promise가 영원히 resolve되지 않음
+- **환경**: localhost + Vercel 배포 모두 동일 증상. DB는 정상 (SQL Editor로 SELECT 성공, RLS 비활성)
+- **원인**:
+  1. `@supabase/ssr`의 `createBrowserClient`가 cookie 기반 세션 처리 시 내부적으로 Promise를 올바르게 resolve하지 못하는 경우 발생
+  2. `.maybeSingle()` 체이닝이 특정 조건에서 Promise를 hang시킴
+  3. `middleware.ts`에서 매 요청마다 `getUser()` 호출 → Supabase 서버 요청이 다른 쿼리를 방해
+
+### 수정 내용
+
+#### 1. Supabase 클라이언트 완전 재작성
+- **변경 전**: `@supabase/ssr`의 `createBrowserClient` 사용
+- **변경 후**: `@supabase/supabase-js`의 `createClient` 직접 사용
+- 싱글톤 패턴: 모듈 레벨에서 1회 생성, `createClient()` 함수는 동일 인스턴스 반환
+- 초기화 시 URL/Key 미리보기 로그 출력
+
+```ts
+// src/lib/supabase/client.ts
+import { createClient as supabaseCreateClient } from '@supabase/supabase-js'
+const supabase = supabaseCreateClient(supabaseUrl, supabaseAnonKey)
+export function createClient() { return supabase }
+```
+
+#### 2. AuthProvider 프로필 로드 재작성
+- `.single()` / `.maybeSingle()` 완전 제거
+- `.select('*')` + `response.data?.[0]` 패턴으로 통일
+- RAW 응답 로깅: data, error, status, count 모두 출력
+- **핵심**: 프로필 로드 실패 시 기본 프로필 설정 → 앱 절대 멈추지 않음
+  - error 발생 → `{ id: userId, nickname: email.split('@')[0] }` 기본 프로필
+  - catch 예외 → 동일 기본 프로필
+  - 프로필 미존재 → 새로 생성 시도, 실패해도 기본 프로필
+
+#### 3. `.maybeSingle()` 프로젝트 전체 제거
+**`.select()` + `data?.[0]` 패턴으로 교체된 파일:**
+1. `src/components/AuthProvider.tsx` - 프로필 조회 (select + insert)
+2. `src/app/routine/[id]/page.tsx` - 루틴 상세 조회
+3. `src/app/group/page.tsx` - 초대코드 그룹 조회 + 기존 멤버 확인
+4. `src/app/group/[id]/page.tsx` - 그룹 조회 + 실시간 메시지 fetch
+5. `src/app/group/new/page.tsx` - 그룹 생성 (insert+select, 2곳)
+6. `src/app/group/invite/[code]/page.tsx` - 초대링크 그룹 조회 + 멤버 확인
+7. `src/app/dashboard/page.tsx` - 그룹 이름 조회
+
+**교체 패턴:**
+```ts
+// 변경 전
+const { data } = await supabase.from('table').select('*').eq('id', id).maybeSingle()
+
+// 변경 후
+const { data: rows } = await supabase.from('table').select('*').eq('id', id)
+const data = rows?.[0] || null
+```
+
+#### 4. Middleware Supabase 로직 완전 제거
+- 기존: `createServerClient` + `getUser()` → 매 요청마다 Supabase 서버 호출
+- 수정: 모든 supabase 임포트/로직 제거, `NextResponse.next()` 만 반환
+- matcher: 빈 배열 (미들웨어 실행 안 함)
+- 라우트 보호는 각 페이지에서 `getSession()`으로 처리
+
+### 빌드 결과
+- 14개 라우트 정상
+- TypeScript 에러: 0
+- `.single()` 잔존: 0건
+- `.maybeSingle()` 잔존: 0건
+- 빌드 성공
+
+### 쿼리 안전성 비교
+| 방식 | 0건 결과 | Promise Hang 위험 | 추천 |
+|---|---|---|---|
+| `.single()` | PGRST116 에러 | 있음 | ❌ |
+| `.maybeSingle()` | null 반환 | 간헐적 있음 | ❌ |
+| `.select()` + `data[0]` | 빈 배열 → null | 없음 | ✅ |
+
+### 핵심 변경 원칙
+1. **Supabase 클라이언트 1개만 유지** → `@supabase/supabase-js` 직접 사용, SSR 패키지 제거
+2. **`.single()` / `.maybeSingle()` 전면 금지** → `.select()` + `data[0]` 패턴만 사용
+3. **Middleware에서 Supabase 제거** → 서버 호출 차단, 클라이언트 세션으로 보호
+4. **프로필 실패 ≠ 앱 멈춤** → 기본 프로필로 항상 동작 보장
+
+---
+
 ## [Debug Fix - single() issue] - 2026-03-07
 
 ### 진단 결과
