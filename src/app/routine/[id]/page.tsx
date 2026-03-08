@@ -57,7 +57,7 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
     }
     loadRoutineDetail(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading, id])
+  }, [user?.id, authLoading, id])
 
   const loadRoutineDetail = async (uid: string) => {
     setError('')

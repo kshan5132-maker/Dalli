@@ -35,7 +35,7 @@ export default function GroupListPage() {
     }
     loadGroups(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading])
+  }, [user?.id, authLoading])
 
   const loadGroups = async (uid: string) => {
     setError('')

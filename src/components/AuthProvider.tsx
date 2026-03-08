@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 import type { Profile } from '@/lib/types'
@@ -34,6 +34,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const [profile, setProfile] = useState<Profile | null>(null)
   const [authState, setAuthState] = useState<AuthState>('loading')
   const supabase = createClient()
+  const userIdRef = useRef<string | null>(null)
 
   const fetchProfile = useCallback(async (userId: string, userEmail?: string) => {
     try {
@@ -117,6 +118,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
         const currentUser = session.user
         console.log('[Dalli] 인증된 사용자:', currentUser.email)
+        userIdRef.current = currentUser.id
         setUser(currentUser)
         setAuthState('authenticated')
         await fetchProfile(currentUser.id, currentUser.email)
@@ -133,19 +135,27 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         if (!mounted) return
         console.log('[Dalli] Auth 상태 변경:', event)
         const currentUser = session?.user ?? null
-        setUser(currentUser)
 
         if (event === 'SIGNED_OUT') {
+          userIdRef.current = null
           setProfile(null)
           setUser(null)
           setAuthState('unauthenticated')
           return
         }
 
+        // 같은 유저의 중복 SIGNED_IN 이벤트 무시 (getSession과 중복 방지)
+        if (event === 'SIGNED_IN' && currentUser?.id === userIdRef.current) {
+          return
+        }
+
         if (currentUser) {
+          userIdRef.current = currentUser.id
+          setUser(currentUser)
           setAuthState('authenticated')
           await fetchProfile(currentUser.id, currentUser.email)
         } else {
+          userIdRef.current = null
           setAuthState('unauthenticated')
           setProfile(null)
         }

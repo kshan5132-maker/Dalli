@@ -45,7 +45,7 @@ export default function RoutineListPage() {
     }
     loadRoutines(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading])
+  }, [user?.id, authLoading])
 
   const loadRoutines = async (uid: string) => {
     setError('')

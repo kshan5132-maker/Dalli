@@ -52,7 +52,7 @@ export default function VerifyPage() {
     }
     loadData(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading])
+  }, [user?.id, authLoading])
 
   // 10-second loading timeout
   useEffect(() => {

@@ -57,7 +57,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     }
     loadGroupData(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading, id])
+  }, [user?.id, authLoading, id])
 
   const loadGroupData = async (uid: string) => {
     setError('')

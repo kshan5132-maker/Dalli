@@ -52,7 +52,7 @@ export default function DashboardPage() {
     }
     loadDashboard(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading])
+  }, [user?.id, authLoading])
 
   useEffect(() => {
     if (!loading) return

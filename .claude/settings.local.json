@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm install @supabase/ssr)",
       "Bash(npx next build)",
-      "Bash(node -e \"const pkg = require\\(''./package.json''\\); console.log\\(JSON.stringify\\(pkg.dependencies, null, 2\\)\\)\")"
+      "Bash(node -e \"const pkg = require\\(''./package.json''\\); console.log\\(JSON.stringify\\(pkg.dependencies, null, 2\\)\\)\")",
+      "Bash(npm run build)"
     ]
   }
 }
