@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
@@ -17,7 +18,7 @@ import { GroupListSkeleton } from '@/components/Skeleton'
 export default function GroupListPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [userId, setUserId] = useState<string | null>(null)
+  const { user, loading: authLoading } = useAuth()
   const [groups, setGroups] = useState<(Group & { memberCount: number })[]>([])
   const [loading, setLoading] = useState(true)
   const [showJoinModal, setShowJoinModal] = useState(false)
@@ -27,24 +28,14 @@ export default function GroupListPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const init = async () => {
-      console.log('[Dalli] [Group] getSession 시작')
-      const { data: { session }, error: authError } = await supabase.auth.getSession()
-      const user = session?.user ?? null
-      console.log('[Dalli] [Group] getSession 완료', user?.id)
-
-      if (authError || !user) {
-        setLoading(false)
-        return
-      }
-
-      setUserId(user.id)
-      await loadGroups(user.id)
+    if (authLoading) return
+    if (!user) {
+      setLoading(false)
+      return
     }
-
-    init()
+    loadGroups(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user, authLoading])
 
   const loadGroups = async (uid: string) => {
     setError('')
@@ -97,7 +88,7 @@ export default function GroupListPage() {
   }
 
   const handleJoinByCode = async () => {
-    if (!inviteCode.trim() || !userId) return
+    if (!inviteCode.trim() || !user) return
     setJoining(true)
     setJoinError('')
 
@@ -119,7 +110,7 @@ export default function GroupListPage() {
         .from('group_members')
         .select('*')
         .eq('group_id', group.id)
-        .eq('user_id', userId)
+        .eq('user_id', user.id)
       const existing = existingRows?.[0] || null
 
       if (existing) {
@@ -130,7 +121,7 @@ export default function GroupListPage() {
 
       const { error } = await supabase.from('group_members').insert({
         group_id: group.id,
-        user_id: userId,
+        user_id: user.id,
         role: 'member',
       })
 
@@ -162,7 +153,7 @@ export default function GroupListPage() {
     return (
       <>
         <Header title="내 그룹" />
-        <ErrorRetry error={error} onRetry={() => { if (userId) loadGroups(userId) }} />
+        <ErrorRetry error={error} onRetry={() => { if (user) loadGroups(user.id) }} />
       </>
     )
   }

@@ -4,6 +4,7 @@ import { useEffect, useState, use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
 import Card from '@/components/Card'
 import Button from '@/components/Button'
@@ -27,8 +28,8 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params)
   const router = useRouter()
   const supabase = createClient()
+  const { user, loading: authLoading } = useAuth()
 
-  const [userId, setUserId] = useState<string | null>(null)
   const [routine, setRoutine] = useState<RoutineDetail | null>(null)
   const [verifications, setVerifications] = useState<(Verification & { profiles?: Profile })[]>([])
   const [weeklyDone, setWeeklyDone] = useState(0)
@@ -49,28 +50,14 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
   }, [loading])
 
   useEffect(() => {
-    const init = async () => {
-      console.log('[Dalli] [RoutineDetail] getSession 시작')
-      const { data: { session }, error: authError } = await supabase.auth.getSession()
-      if (authError) {
-        console.error('[Dalli] [RoutineDetail] getSession 에러:', authError)
-        setLoading(false)
-        setError('인증 정보를 확인할 수 없습니다.')
-        return
-      }
-      const user = session?.user ?? null
-      console.log('[Dalli] [RoutineDetail] getSession 완료:', user?.email)
-
-      if (user) {
-        setUserId(user.id)
-        await loadRoutineDetail(user.id)
-      } else {
-        setLoading(false)
-      }
+    if (authLoading) return
+    if (!user) {
+      setLoading(false)
+      return
     }
-    init()
+    loadRoutineDetail(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+  }, [user, authLoading, id])
 
   const loadRoutineDetail = async (uid: string) => {
     setError('')
@@ -274,7 +261,7 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
         <Header title="루틴 상세" showBack />
         <ErrorRetry
           error={error || '루틴을 찾을 수 없습니다.'}
-          onRetry={() => { setError(''); setLoading(true); if (userId) loadRoutineDetail(userId) }}
+          onRetry={() => { setError(''); setLoading(true); if (user) loadRoutineDetail(user.id) }}
         />
       </>
     )
@@ -377,15 +364,15 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
             <h3 className="text-sm font-bold mb-3">그룹 내 랭킹</h3>
             <div className="space-y-2">
               {rankings.map((rank, idx) => (
-                <div key={rank.userId} className={`flex items-center gap-3 p-2 rounded-lg ${rank.userId === userId ? 'bg-primary/5' : ''}`}>
+                <div key={rank.userId} className={`flex items-center gap-3 p-2 rounded-lg ${rank.userId === user?.id ? 'bg-primary/5' : ''}`}>
                   <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
                     idx === 0 ? 'bg-warning/20 text-warning' : idx === 1 ? 'bg-text-muted/20 text-text-muted' : idx === 2 ? 'bg-warning/10 text-warning/70' : 'bg-bg text-text-muted'
                   }`}>
                     {idx + 1}
                   </span>
-                  <span className={`text-sm flex-1 truncate ${rank.userId === userId ? 'font-bold text-primary' : 'font-medium'}`}>
+                  <span className={`text-sm flex-1 truncate ${rank.userId === user?.id ? 'font-bold text-primary' : 'font-medium'}`}>
                     {rank.nickname}
-                    {rank.userId === userId && <span className="text-xs ml-1">(나)</span>}
+                    {rank.userId === user?.id && <span className="text-xs ml-1">(나)</span>}
                   </span>
                   <span className="text-xs text-text-muted">{rank.weeklyDone}/{weeklyTarget}회</span>
                   <span className={`text-sm font-bold ${rank.rate >= 100 ? 'text-success' : rank.rate >= 50 ? 'text-primary' : 'text-danger'}`}>

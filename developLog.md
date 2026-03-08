@@ -1,5 +1,84 @@
 # Dalli 개발 로그
 
+## [Critical Fix - Auth Lock Conflict] - 2026-03-08
+
+### 진단 결과
+- **증상**: 콘솔 에러:
+  - `@supabase/gotrue-js: Lock 'lock:sb-mpwvcjxpsxgzdvifqbgi-auth-token' was not released within 5000ms. Forcefully acquiring the lock to recover.`
+  - `AbortError: Lock broken by another request with the 'steal' option.`
+- **직접 쿼리 테스트**: DATA: 2건 정상 반환, ERROR: null → DB 연결 자체는 정상
+- **원인**: AuthProvider + 각 페이지(7곳)가 동시에 `getSession()`을 호출 → Auth Lock 충돌 → Lock이 5초 안에 해제되지 않아 강제 steal → 진행 중인 쿼리가 Abort됨
+
+### 수정 내용
+
+#### 1. Auth 호출을 AuthProvider 한 곳으로 집중
+- **핵심 원칙**: `getSession()`은 AuthProvider에서만 딱 1번 호출
+- 각 페이지에서 `getSession()`, `getUser()` 직접 호출 전부 제거
+- 대신 `useAuth()` 훅으로 AuthProvider의 상태(user, loading, profile)를 가져다 사용
+
+**변경 패턴:**
+```ts
+// 변경 전 (각 페이지에서 직접 호출 → Lock 충돌)
+const { data: { session } } = await supabase.auth.getSession()
+const user = session?.user ?? null
+
+// 변경 후 (AuthProvider에서 제공하는 상태 사용)
+const { user, loading: authLoading } = useAuth()
+```
+
+**변경된 파일 (7개 페이지):**
+1. `src/app/page.tsx` - 홈 페이지 (Page 컴포넌트에서 useAuth로 교체)
+2. `src/app/routine/page.tsx` - 루틴 목록
+3. `src/app/routine/[id]/page.tsx` - 루틴 상세
+4. `src/app/verify/page.tsx` - 인증 페이지 (ErrorRetry 내 getSession도 제거)
+5. `src/app/dashboard/page.tsx` - 대시보드 (ErrorRetry 내 getSession도 제거)
+6. `src/app/group/page.tsx` - 그룹 목록
+7. `src/app/group/[id]/page.tsx` - 그룹 상세
+
+#### 2. 각 페이지 데이터 로드 패턴
+```ts
+const { user, loading: authLoading } = useAuth()
+
+useEffect(() => {
+  if (authLoading) return  // Auth 로딩 중이면 대기
+  if (!user) {
+    setLoading(false)
+    return
+  }
+  loadData(user.id)
+}, [user, authLoading])
+```
+
+#### 3. Supabase 클라이언트 Auth 설정 추가
+`src/lib/supabase/client.ts`에 auth 옵션 추가:
+```ts
+const supabase = supabaseCreateClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storageKey: 'dalli-auth',
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  }
+})
+```
+
+#### 4. userId 상태 제거
+- 각 페이지의 `const [userId, setUserId] = useState(null)` 전부 제거
+- `user?.id` (useAuth 훅에서 제공)로 대체
+- ErrorRetry 핸들러도 `user?.id` 사용
+
+### 핵심 변경 원칙
+1. **getSession()은 AuthProvider에서만 딱 1번 호출**
+2. **각 페이지에서 getSession(), getUser() 직접 호출 절대 금지**
+3. **useAuth() 훅으로만 인증 정보 접근**
+4. **.single(), .maybeSingle() 사용 금지** (기존 원칙 유지)
+
+### 빌드 결과
+- TypeScript 에러: 0
+- 빌드 성공
+
+---
+
 ## [Critical Fix - Profile Query Hang] - 2026-03-07
 
 ### 진단 결과

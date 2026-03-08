@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, use } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
 import Card from '@/components/Card'
 import Button from '@/components/Button'
@@ -26,9 +27,9 @@ type MemberStats = {
 export default function GroupDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const supabase = createClient()
+  const { user, loading: authLoading } = useAuth()
 
   // -- State --
-  const [userId, setUserId] = useState<string | null>(null)
   const [group, setGroup] = useState<Group | null>(null)
   const [members, setMembers] = useState<(GroupMember & { profiles: Profile })[]>([])
   const [memberStats, setMemberStats] = useState<MemberStats[]>([])
@@ -47,26 +48,16 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
-  // -- Initialize: getSession (로컬 캐시, 즉시 응답) --
+  // -- Initialize: useAuth()에서 인증 정보 가져오기 --
   useEffect(() => {
-    const init = async () => {
-      console.log('[Dalli] [GroupDetail] getSession 시작')
-      const { data: { session }, error: authError } = await supabase.auth.getSession()
-      const user = session?.user ?? null
-      console.log('[Dalli] [GroupDetail] getSession 완료', user?.id)
-
-      if (authError || !user) {
-        setLoading(false)
-        return
-      }
-
-      setUserId(user.id)
-      await loadGroupData(user.id)
+    if (authLoading) return
+    if (!user) {
+      setLoading(false)
+      return
     }
-
-    init()
+    loadGroupData(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+  }, [user, authLoading, id])
 
   const loadGroupData = async (uid: string) => {
     setError('')
@@ -164,7 +155,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
   // -- Load chat messages --
   const loadMessages = useCallback(async () => {
-    if (!userId) return
+    if (!user) return
     try {
       console.log('[Dalli] [GroupDetail] messages 쿼리 시작')
       const { data } = await supabase
@@ -181,18 +172,18 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     } catch (err) {
       console.error('[Dalli] [GroupDetail] 메시지 로드 실패:', err)
     }
-  }, [id, userId, supabase])
+  }, [id, user, supabase])
 
   // -- Load messages when chat tab is selected --
   useEffect(() => {
-    if (activeTab === 'chat' && userId) {
+    if (activeTab === 'chat' && user) {
       loadMessages()
     }
-  }, [activeTab, userId, loadMessages])
+  }, [activeTab, user, loadMessages])
 
   // -- Supabase Realtime subscription for chat --
   useEffect(() => {
-    if (activeTab !== 'chat' || !userId) return
+    if (activeTab !== 'chat' || !user) return
 
     const channel = supabase
       .channel(`group-chat-${id}`)
@@ -226,7 +217,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [activeTab, id, userId, supabase])
+  }, [activeTab, id, user, supabase])
 
   // -- Auto-scroll to bottom on new messages --
   useEffect(() => {
@@ -237,7 +228,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
   // -- Send chat message --
   const handleSendMessage = async () => {
-    if (!chatInput.trim() || !userId || sendingChat) return
+    if (!chatInput.trim() || !user || sendingChat) return
     setSendingChat(true)
     const content = chatInput.trim()
     setChatInput('')
@@ -245,7 +236,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     try {
       const { error: sendError } = await supabase
         .from('messages')
-        .insert({ group_id: id, user_id: userId, content })
+        .insert({ group_id: id, user_id: user.id, content })
 
       if (sendError) {
         console.error('[Dalli] [GroupDetail] 메시지 전송 실패:', sendError)
@@ -336,7 +327,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         <ErrorRetry
           error={error || '그룹을 찾을 수 없습니다.'}
           onRetry={() => {
-            if (userId) loadGroupData(userId)
+            if (user) loadGroupData(user.id)
           }}
         />
       </>
@@ -613,7 +604,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 </div>
               ) : (
                 messages.map((msg) => {
-                  const isMine = msg.user_id === userId
+                  const isMine = msg.user_id === user?.id
                   return (
                     <div
                       key={msg.id}

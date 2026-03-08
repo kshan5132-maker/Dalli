@@ -9,7 +9,14 @@ console.log('[Dalli] Supabase 초기화:', {
 })
 
 // 싱글톤: 앱 전체에서 하나의 클라이언트만 사용
-const supabase = supabaseCreateClient(supabaseUrl, supabaseAnonKey)
+const supabase = supabaseCreateClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    storageKey: 'dalli-auth',
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  }
+})
 
 export function createClient() {
   return supabase

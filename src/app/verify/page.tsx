@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import { isDevMode } from '@/lib/fetch'
 import Header from '@/components/Header'
 import Button from '@/components/Button'
@@ -22,9 +23,9 @@ interface GroupRoutineWithGroup extends Routine {
 export default function VerifyPage() {
   const router = useRouter()
   const supabase = createClient()
+  const { user, loading: authLoading } = useAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [userId, setUserId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('personal')
   const [personalRoutines, setPersonalRoutines] = useState<Routine[]>([])
   const [groupRoutines, setGroupRoutines] = useState<GroupRoutineWithGroup[]>([])
@@ -41,27 +42,17 @@ export default function VerifyPage() {
   const [streak, setStreak] = useState(0)
   const [error, setError] = useState('')
 
-  // Get user via getSession (로컬 캐시, 즉시 응답)
+  // useAuth()에서 인증 정보 가져오기
   useEffect(() => {
-    const init = async () => {
-      console.log('[Dalli] [Verify] getSession 시작')
-      const { data: { session }, error: authError } = await supabase.auth.getSession()
-      const user = session?.user ?? null
-      console.log('[Dalli] [Verify] getSession 완료', user?.id, authError?.message)
-
-      if (authError || !user) {
-        setLoading(false)
-        setError('로그인이 필요합니다.')
-        return
-      }
-
-      setUserId(user.id)
-      await loadData(user.id)
+    if (authLoading) return
+    if (!user) {
+      setLoading(false)
+      setError('로그인이 필요합니다.')
+      return
     }
-
-    init()
+    loadData(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user, authLoading])
 
   // 10-second loading timeout
   useEffect(() => {
@@ -198,7 +189,7 @@ export default function VerifyPage() {
   }
 
   const calculateStreak = async (routineId: string): Promise<number> => {
-    if (!userId) return 0
+    if (!user) return 0
 
     try {
       // Fetch recent verifications for this routine, ordered by date descending
@@ -206,7 +197,7 @@ export default function VerifyPage() {
         .from('verifications')
         .select('verified_at')
         .eq('routine_id', routineId)
-        .eq('user_id', userId)
+        .eq('user_id', user.id)
         .order('verified_at', { ascending: false })
         .limit(60) // enough for 2 months of daily
 
@@ -246,7 +237,7 @@ export default function VerifyPage() {
   }
 
   const handleVerify = async () => {
-    if (!selectedRoutine || !userId) return
+    if (!selectedRoutine || !user) return
     setSubmitting(true)
 
     try {
@@ -262,7 +253,7 @@ export default function VerifyPage() {
           'image/heif': 'heif',
         }
         const fileExt = extMap[photo.type] || 'jpg'
-        const fileName = `${userId}/${Date.now()}.${fileExt}`
+        const fileName = `${user.id}/${Date.now()}.${fileExt}`
 
         const { error: uploadError } = await supabase.storage
           .from('verifications')
@@ -284,7 +275,7 @@ export default function VerifyPage() {
       const isAlreadyVerified = todayVerified.has(selectedRoutine.id)
       const { error: verifyError } = await supabase.from('verifications').insert({
         routine_id: selectedRoutine.id,
-        user_id: userId,
+        user_id: user.id,
         group_id: selectedRoutine.group_id,
         photo_url: photoUrl,
         memo: memo.trim() || null,
@@ -336,7 +327,7 @@ export default function VerifyPage() {
     setPhotoPreview(null)
     setMemo('')
     setStreak(0)
-    if (userId) loadData(userId)
+    if (user) loadData(user.id)
   }
 
   // Loading state
@@ -359,22 +350,11 @@ export default function VerifyPage() {
           onRetry={() => {
             setError('')
             setLoading(true)
-            if (userId) {
-              loadData(userId)
+            if (user) {
+              loadData(user.id)
             } else {
-              // Re-run auth + load
-              const init = async () => {
-                const { data: { session } } = await supabase.auth.getSession()
-                const user = session?.user ?? null
-                if (user) {
-                  setUserId(user.id)
-                  await loadData(user.id)
-                } else {
-                  setLoading(false)
-                  setError('로그인이 필요합니다.')
-                }
-              }
-              init()
+              setLoading(false)
+              setError('로그인이 필요합니다.')
             }
           }}
         />

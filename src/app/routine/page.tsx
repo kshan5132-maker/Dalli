@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
 import Button from '@/components/Button'
 import Card from '@/components/Card'
@@ -17,7 +18,7 @@ import { RoutineListSkeleton } from '@/components/Skeleton'
 
 export default function RoutineListPage() {
   const supabase = createClient()
-  const [userId, setUserId] = useState<string | null>(null)
+  const { user, loading: authLoading } = useAuth()
   const [routines, setRoutines] = useState<Routine[]>([])
   const [weeklyVerifications, setWeeklyVerifications] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
@@ -37,27 +38,14 @@ export default function RoutineListPage() {
   }, [loading])
 
   useEffect(() => {
-    const init = async () => {
-      console.log('[Dalli] [Routine] getSession 시작')
-      const { data: { session }, error: authError } = await supabase.auth.getSession()
-      if (authError) {
-        console.error('[Dalli] [Routine] getSession 에러:', authError)
-        setLoading(false)
-        return
-      }
-      const user = session?.user ?? null
-      console.log('[Dalli] [Routine] getSession 완료:', user?.email)
-
-      if (user) {
-        setUserId(user.id)
-        await loadRoutines(user.id)
-      } else {
-        setLoading(false)
-      }
+    if (authLoading) return
+    if (!user) {
+      setLoading(false)
+      return
     }
-    init()
+    loadRoutines(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user, authLoading])
 
   const loadRoutines = async (uid: string) => {
     setError('')
@@ -143,7 +131,7 @@ export default function RoutineListPage() {
     return (
       <>
         <Header title="내 루틴" />
-        <ErrorRetry error={error} onRetry={() => { setError(''); setLoading(true); if (userId) loadRoutines(userId) }} />
+        <ErrorRetry error={error} onRetry={() => { setError(''); setLoading(true); if (user) loadRoutines(user.id) }} />
       </>
     )
   }

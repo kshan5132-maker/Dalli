@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
 import Card from '@/components/Card'
 import type { Routine, Profile } from '@/lib/types'
@@ -33,7 +34,7 @@ type GroupSummary = {
 
 export default function DashboardPage() {
   const supabase = createClient()
-  const [userId, setUserId] = useState<string | null>(null)
+  const { user, loading: authLoading } = useAuth()
   const [stats, setStats] = useState<RoutineStats[]>([])
   const [weeklyData, setWeeklyData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0])
   const [groupSummaries, setGroupSummaries] = useState<GroupSummary[]>([])
@@ -41,27 +42,17 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'personal' | 'group'>('personal')
 
-  // Get user via getSession (로컬 캐시, 즉시 응답)
+  // useAuth()에서 인증 정보 가져오기
   useEffect(() => {
-    const init = async () => {
-      console.log('[Dalli] [Dashboard] getSession 시작')
-      const { data: { session }, error: authError } = await supabase.auth.getSession()
-      const user = session?.user ?? null
-      console.log('[Dalli] [Dashboard] getSession 완료', user?.id, authError?.message)
-
-      if (authError || !user) {
-        setLoading(false)
-        setError('로그인이 필요합니다.')
-        return
-      }
-
-      setUserId(user.id)
-      await loadDashboard(user.id)
+    if (authLoading) return
+    if (!user) {
+      setLoading(false)
+      setError('로그인이 필요합니다.')
+      return
     }
-
-    init()
+    loadDashboard(user.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user, authLoading])
 
   useEffect(() => {
     if (!loading) return
@@ -288,21 +279,11 @@ export default function DashboardPage() {
           onRetry={() => {
             setError('')
             setLoading(true)
-            if (userId) {
-              loadDashboard(userId)
+            if (user) {
+              loadDashboard(user.id)
             } else {
-              const init = async () => {
-                const { data: { session } } = await supabase.auth.getSession()
-                const user = session?.user ?? null
-                if (user) {
-                  setUserId(user.id)
-                  await loadDashboard(user.id)
-                } else {
-                  setLoading(false)
-                  setError('로그인이 필요합니다.')
-                }
-              }
-              init()
+              setLoading(false)
+              setError('로그인이 필요합니다.')
             }
           }}
         />

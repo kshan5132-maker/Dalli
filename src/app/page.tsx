@@ -246,29 +246,11 @@ function HomePage({ userId }: { userId: string }) {
 }
 
 export default function Page() {
-  const [authChecked, setAuthChecked] = useState(false)
-  const [userId, setUserId] = useState<string | null>(null)
+  const { user, loading: authLoading } = useAuth()
 
-  useEffect(() => {
-    const checkAuth = async () => {
-      const supabase = createClient()
-      console.log('[Dalli] [Page] getSession 시작')
-      const { data: { session }, error } = await supabase.auth.getSession()
-      if (error) {
-        console.error('[Dalli] [Page] getSession 에러:', error)
-      } else {
-        console.log('[Dalli] [Page] getSession 완료:', session?.user?.email)
-      }
-      const user = session?.user ?? null
-      setUserId(user?.id ?? null)
-      setAuthChecked(true)
-    }
-    checkAuth()
-  }, [])
-
-  if (!authChecked) {
+  if (authLoading) {
     return <HomeSkeleton />
   }
 
-  return userId ? <HomePage userId={userId} /> : <LandingPage />
+  return user ? <HomePage userId={user.id} /> : <LandingPage />
 }
