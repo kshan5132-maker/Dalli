@@ -101,6 +101,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     }
   }, [user, fetchProfile])
 
+  // 프로필을 user 변경 시 별도로 로드 (lock 밖에서 실행)
+  useEffect(() => {
+    if (!user) return
+    fetchProfile(user.id, user.email)
+  }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     let mounted = true
 
@@ -121,7 +127,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         userIdRef.current = currentUser.id
         setUser(currentUser)
         setAuthState('authenticated')
-        await fetchProfile(currentUser.id, currentUser.email)
+        // fetchProfile은 별도 useEffect에서 처리 (lock 데드락 방지)
       } catch (err) {
         console.error('[Dalli] Auth 초기화 에러:', err)
         if (mounted) setAuthState('unauthenticated')
@@ -131,7 +137,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     initialize()
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if (!mounted) return
         console.log('[Dalli] Auth 상태 변경:', event)
         const currentUser = session?.user ?? null
@@ -153,7 +159,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           userIdRef.current = currentUser.id
           setUser(currentUser)
           setAuthState('authenticated')
-          await fetchProfile(currentUser.id, currentUser.email)
+          // fetchProfile은 별도 useEffect에서 처리 (lock 데드락 방지)
         } else {
           userIdRef.current = null
           setAuthState('unauthenticated')
@@ -166,7 +172,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       mounted = false
       subscription.unsubscribe()
     }
-  }, [supabase, fetchProfile])
+  }, [supabase])
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut()
