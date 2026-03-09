@@ -11,6 +11,7 @@ import Button from '@/components/Button'
 import Modal from '@/components/Modal'
 import ErrorRetry from '@/components/ErrorRetry'
 import { GroupDetailSkeleton } from '@/components/Skeleton'
+import Input from '@/components/Input'
 import type { Group, GroupMember, Routine, Verification, Message, Profile } from '@/lib/types'
 import { FREQUENCY_TARGETS } from '@/lib/types'
 import { getWeekRange, formatDate } from '@/lib/utils'
@@ -47,6 +48,11 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const [chatInput, setChatInput] = useState('')
   const [sendingChat, setSendingChat] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Memo edit state
+  const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
+  const [editMemoText, setEditMemoText] = useState('')
+  const [savingMemo, setSavingMemo] = useState(false)
 
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
@@ -124,25 +130,27 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
         .lte('verified_at', end.toISOString())
       console.log('[Dalli] [GroupDetail] weeklyVerifications 쿼리 완료', weeklyVerifications?.length)
 
+      // 그룹 루틴은 모든 멤버에게 공유됨 → 목표 횟수는 전체 그룹 루틴의 frequency 합산
+      const allGroupRoutines = groupRoutines || []
+      const sharedWeeklyTarget = allGroupRoutines.reduce(
+        (sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0),
+        0
+      )
+
       const stats: MemberStats[] = memberList.map((member) => {
         const profile = member.profiles!
-        const memberRoutines = (groupRoutines || []).filter((r) => r.user_id === member.user_id)
-        const weeklyTarget = memberRoutines.reduce(
-          (sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0),
-          0
-        )
         const weeklyDone = (weeklyVerifications || []).filter(
           (v) => v.user_id === member.user_id
         ).length
-        const rate = weeklyTarget > 0 ? Math.round((weeklyDone / weeklyTarget) * 100) : 0
+        const rate = sharedWeeklyTarget > 0 ? Math.round((weeklyDone / sharedWeeklyTarget) * 100) : 0
 
         return {
           profile,
           userId: member.user_id,
           weeklyDone,
-          weeklyTarget,
+          weeklyTarget: sharedWeeklyTarget,
           rate,
-          penalty: weeklyTarget > 0 && rate < 100,
+          penalty: sharedWeeklyTarget > 0 && rate < 100,
         }
       })
 
@@ -283,6 +291,41 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     }
   }
 
+  // -- Edit verification memo (own, same day only) --
+  const handleStartEditMemo = (v: Verification & { profiles: Profile; routines: Routine }) => {
+    setEditingMemoId(v.id)
+    setEditMemoText(v.memo || '')
+  }
+
+  const handleSaveMemo = async () => {
+    if (!editingMemoId) return
+    setSavingMemo(true)
+    try {
+      const { error: updateError } = await supabase
+        .from('verifications')
+        .update({ memo: editMemoText.trim() || null })
+        .eq('id', editingMemoId)
+
+      if (!updateError) {
+        setFeed((prev) =>
+          prev.map((v) =>
+            v.id === editingMemoId ? { ...v, memo: editMemoText.trim() || null } : v
+          )
+        )
+      }
+    } catch (err) {
+      console.error('[Dalli] [GroupDetail] 메모 수정 실패:', err)
+    } finally {
+      setSavingMemo(false)
+      setEditingMemoId(null)
+      setEditMemoText('')
+    }
+  }
+
+  const isToday = (dateStr: string) => {
+    return new Date(dateStr).toDateString() === new Date().toDateString()
+  }
+
   // -- Copy invite code --
   const handleCopyCode = async () => {
     if (!group) return
@@ -416,61 +459,79 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 아직 인증 기록이 없어요
               </div>
             ) : (
-              feed.map((v) => (
-                <Card key={v.id}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold shrink-0">
-                      {v.profiles?.nickname?.charAt(0) || '?'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold">
-                            {v.profiles?.nickname || '알 수 없음'}
-                          </span>
-                          <span className="text-xs text-text-muted">
-                            {formatDate(v.verified_at)}
-                          </span>
-                        </div>
-                        {myRole === 'admin' && (
-                          <button
-                            onClick={() => handleDeleteVerification(v.id)}
-                            disabled={deletingId === v.id}
-                            className="p-1 text-text-muted hover:text-danger transition-colors disabled:opacity-50"
-                            title="인증 삭제"
-                          >
-                            {deletingId === v.id ? (
-                              <div className="w-4 h-4 border-2 border-danger border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
-                              </svg>
+              feed.map((v) => {
+                const isMine = v.user_id === user?.id
+                const canEdit = isMine && isToday(v.verified_at)
+
+                return (
+                  <Card key={v.id}>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold shrink-0">
+                        {v.profiles?.nickname?.charAt(0) || '?'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-semibold">
+                              {v.profiles?.nickname || '알 수 없음'}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                              {formatDate(v.verified_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {canEdit && (
+                              <button
+                                onClick={() => handleStartEditMemo(v)}
+                                className="p-1 text-text-muted hover:text-primary transition-colors"
+                                title="메모 수정"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                  <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                                </svg>
+                              </button>
                             )}
-                          </button>
+                            {myRole === 'admin' && (
+                              <button
+                                onClick={() => handleDeleteVerification(v.id)}
+                                disabled={deletingId === v.id}
+                                className="p-1 text-text-muted hover:text-danger transition-colors disabled:opacity-50"
+                                title="인증 삭제"
+                              >
+                                {deletingId === v.id ? (
+                                  <div className="w-4 h-4 border-2 border-danger border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                    <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.519.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z" clipRule="evenodd" />
+                                  </svg>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-text-secondary mt-0.5">
+                          <span className="text-primary font-medium">
+                            {v.routines?.title || '루틴'}
+                          </span>
+                          을 인증했습니다
+                        </p>
+                        {v.memo && (
+                          <p className="text-sm text-text mt-2">{v.memo}</p>
+                        )}
+                        {v.photo_url && (
+                          <div className="mt-2 rounded-xl overflow-hidden">
+                            <img
+                              src={v.photo_url}
+                              alt="인증 사진"
+                              className="w-full h-40 object-cover"
+                            />
+                          </div>
                         )}
                       </div>
-                      <p className="text-xs text-text-secondary mt-0.5">
-                        <span className="text-primary font-medium">
-                          {v.routines?.title || '루틴'}
-                        </span>
-                        을 인증했습니다
-                      </p>
-                      {v.memo && (
-                        <p className="text-sm text-text mt-2">{v.memo}</p>
-                      )}
-                      {v.photo_url && (
-                        <div className="mt-2 rounded-xl overflow-hidden">
-                          <img
-                            src={v.photo_url}
-                            alt="인증 사진"
-                            className="w-full h-40 object-cover"
-                          />
-                        </div>
-                      )}
                     </div>
-                  </div>
-                </Card>
-              ))
+                  </Card>
+                )
+              })
             )}
           </div>
         )}
@@ -689,6 +750,20 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           </>
         )}
       </div>
+
+      {/* Memo edit modal */}
+      <Modal isOpen={!!editingMemoId} onClose={() => { setEditingMemoId(null); setEditMemoText('') }} title="메모 수정">
+        <div className="space-y-4">
+          <textarea
+            value={editMemoText}
+            onChange={(e) => setEditMemoText(e.target.value)}
+            placeholder="메모를 입력하세요"
+            rows={3}
+            className="w-full px-4 py-3 bg-bg border border-border rounded-xl text-sm text-text placeholder:text-text-muted resize-none focus:outline-none focus:border-primary/50 transition-colors"
+          />
+          <Button fullWidth onClick={handleSaveMemo} loading={savingMemo}>저장하기</Button>
+        </div>
+      </Modal>
 
       {/* Invite modal */}
       <Modal isOpen={showInvite} onClose={() => setShowInvite(false)} title="친구 초대">

@@ -1,5 +1,61 @@
 # Dalli 개발 로그
 
+## [Critical Fix - Group Routine Sharing + Edit] - 2026-03-09
+
+### 버전: Beta 1.0.5
+
+### 수정된 버그
+
+#### 버그 1: 그룹 루틴이 멤버에게 표시되지 않음
+- **증상**: 그룹 관리자가 만든 그룹 루틴이 다른 멤버의 루틴 목록/홈/대시보드에 표시되지 않음
+- **원인**: 루틴 쿼리가 `.eq('user_id', uid)`로 필터 → 루틴 생성자(관리자)만 볼 수 있음
+- **수정**: 개인 루틴과 그룹 루틴을 분리 쿼리
+  - 개인 루틴: `.eq('user_id', uid).eq('type', 'personal')`
+  - 그룹 루틴: `group_members`에서 내가 속한 그룹 조회 → `.eq('type', 'group').in('group_id', groupIds)`
+  - 두 결과를 합쳐서 `allRoutines`로 사용
+
+**수정된 파일:**
+1. `src/app/routine/page.tsx` - 루틴 목록 `loadRoutines()`
+2. `src/app/page.tsx` - 홈 페이지 `loadData()`
+3. `src/app/dashboard/page.tsx` - 대시보드 `loadDashboard()`
+
+#### 버그 2: 그룹 멤버 인증 목표 횟수 0 표시
+- **증상**: 그룹 멤버 "주닝닝"이 "주간 1/0회 완료"로 표시 (목표가 0)
+- **원인**: `memberRoutines.filter(r => r.user_id === member.user_id)`로 멤버별 목표 계산 → 루틴 생성자가 아닌 멤버는 0
+- **수정**: 그룹 루틴은 모든 멤버에게 공유 → 전체 그룹 루틴의 `FREQUENCY_TARGETS` 합산을 `sharedWeeklyTarget`으로 사용
+  ```ts
+  const sharedWeeklyTarget = allGroupRoutines.reduce(
+    (sum, r) => sum + (FREQUENCY_TARGETS[r.frequency] || 0), 0
+  )
+  ```
+
+**수정된 파일:**
+1. `src/app/group/[id]/page.tsx` - 그룹 상세 멤버 통계
+2. `src/app/dashboard/page.tsx` - 대시보드 그룹 요약 멤버 순위
+
+### 추가된 기능
+
+#### 인증 메모 수정 기능
+- **조건**: 본인 인증만, 당일(오늘)만, 메모 텍스트만 (사진 수정 불가)
+- **UI**: 피드 카드에 연필 아이콘 (조건 충족 시만 표시)
+- **모달**: 메모 입력 + 저장 버튼
+- **DB**: `supabase.from('verifications').update({ memo }).eq('id', verificationId)`
+
+**수정된 파일:**
+1. `src/app/group/[id]/page.tsx` - 피드 카드 연필 아이콘 + 메모 수정 모달
+
+### 변경된 파일 전체 목록
+1. `src/app/routine/page.tsx` - 그룹 루틴 쿼리 분리
+2. `src/app/page.tsx` - 그룹 루틴 쿼리 분리
+3. `src/app/dashboard/page.tsx` - 그룹 루틴 쿼리 분리 + 멤버 목표 공유
+4. `src/app/group/[id]/page.tsx` - 멤버 목표 공유 + 메모 수정 기능
+
+### 빌드 결과
+- TypeScript 에러: 0
+- 빌드 성공
+
+---
+
 ## [Feature - Group Settings & Delete] - 2026-03-09
 
 ### 추가된 기능

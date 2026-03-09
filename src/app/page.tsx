@@ -89,28 +89,53 @@ function HomePage({ userId }: { userId: string }) {
   useEffect(() => {
     const loadData = async () => {
       try {
-        console.log('[Dalli] [Home] 루틴 쿼리 시작')
-        const { data: allRoutines, error: routinesError } = await supabase
+        // 1. 개인 루틴
+        console.log('[Dalli] [Home] 개인 루틴 쿼리 시작')
+        const { data: personalData, error: personalError } = await supabase
           .from('routines')
           .select('*')
           .eq('user_id', userId)
+          .eq('type', 'personal')
           .order('created_at', { ascending: false })
 
-        if (routinesError) {
-          console.error('[Dalli] [Home] 루틴 쿼리 에러:', routinesError)
+        if (personalError) {
+          console.error('[Dalli] [Home] 개인 루틴 쿼리 에러:', personalError)
           return
         }
-        console.log('[Dalli] [Home] 루틴 쿼리 완료:', allRoutines?.length)
+        console.log('[Dalli] [Home] 개인 루틴 쿼리 완료:', personalData?.length)
 
-        if (allRoutines) {
-          setRoutines(allRoutines as Routine[])
+        // 2. 내가 속한 그룹의 그룹 루틴
+        const { data: memberData } = await supabase
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', userId)
 
+        let groupRoutineData: Routine[] = []
+        if (memberData && memberData.length > 0) {
+          const groupIds = memberData.map((m) => m.group_id)
+          const { data: grData } = await supabase
+            .from('routines')
+            .select('*')
+            .eq('type', 'group')
+            .in('group_id', groupIds)
+            .order('created_at', { ascending: false })
+          groupRoutineData = (grData || []) as Routine[]
+        }
+        console.log('[Dalli] [Home] 그룹 루틴 쿼리 완료:', groupRoutineData.length)
+
+        const allRoutines = [...(personalData || []) as Routine[], ...groupRoutineData]
+        setRoutines(allRoutines)
+
+        // 3. 주간 인증 조회
+        const allRoutineIds = allRoutines.map((r) => r.id)
+        if (allRoutineIds.length > 0) {
           const { start, end } = getWeekRange()
           console.log('[Dalli] [Home] 인증 쿼리 시작')
           const { data: verifications, error: verifsError } = await supabase
             .from('verifications')
             .select('routine_id, verified_at')
             .eq('user_id', userId)
+            .in('routine_id', allRoutineIds)
             .gte('verified_at', start.toISOString())
             .lte('verified_at', end.toISOString())
 

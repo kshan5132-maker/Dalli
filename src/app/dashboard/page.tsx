@@ -67,19 +67,41 @@ export default function DashboardPage() {
   const loadDashboard = async (uid: string) => {
     setError('')
     try {
-      console.log('[Dalli] [Dashboard] Routines 쿼리 시작')
-      const { data: routines, error: routineError } = await supabase
+      // 1. 개인 루틴
+      console.log('[Dalli] [Dashboard] PersonalRoutines 쿼리 시작')
+      const { data: personalData, error: personalError } = await supabase
         .from('routines')
         .select('*')
         .eq('user_id', uid)
-      console.log('[Dalli] [Dashboard] Routines 쿼리 완료', routines?.length)
+        .eq('type', 'personal')
+      console.log('[Dalli] [Dashboard] PersonalRoutines 쿼리 완료', personalData?.length)
 
-      if (routineError) {
-        setError(routineError.message)
+      if (personalError) {
+        setError(personalError.message)
         return
       }
 
-      if (!routines || (routines as Routine[]).length === 0) {
+      // 2. 내가 속한 그룹의 그룹 루틴
+      const { data: memberData } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', uid)
+
+      let groupRoutineData: Routine[] = []
+      if (memberData && memberData.length > 0) {
+        const groupIds = memberData.map((m) => m.group_id)
+        const { data: grData } = await supabase
+          .from('routines')
+          .select('*')
+          .eq('type', 'group')
+          .in('group_id', groupIds)
+        groupRoutineData = (grData || []) as Routine[]
+      }
+      console.log('[Dalli] [Dashboard] GroupRoutines 쿼리 완료', groupRoutineData.length)
+
+      const routines = [...(personalData || []) as Routine[], ...groupRoutineData]
+
+      if (routines.length === 0) {
         setLoading(false)
         return
       }
@@ -206,18 +228,17 @@ export default function DashboardPage() {
             .lte('verified_at', weekEnd.toISOString())
           console.log('[Dalli] [Dashboard] GroupVerifications 쿼리 완료', groupId, grVerifs?.length)
 
-          // Per-member rate calculation
+          // Per-member rate calculation (그룹 루틴은 전체 멤버 공유 → 목표는 동일)
+          const sharedTarget = (grRoutines || []).reduce((sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0), 0)
           const memberRates = members.map(m => {
-            const memberRoutines = (grRoutines || []).filter(r => r.user_id === m.user_id)
-            const memberTarget = memberRoutines.reduce((sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0), 0)
             const memberDone = (grVerifs || []).filter(v => v.user_id === m.user_id).length
-            const rate = memberTarget > 0 ? Math.round((memberDone / memberTarget) * 100) : 0
+            const rate = sharedTarget > 0 ? Math.round((memberDone / sharedTarget) * 100) : 0
             const profile = m.profiles as unknown as Profile
             return {
               userId: m.user_id,
               nickname: profile?.nickname || '알 수 없음',
               done: memberDone,
-              target: memberTarget,
+              target: sharedTarget,
               rate,
             }
           })
