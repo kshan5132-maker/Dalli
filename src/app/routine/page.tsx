@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
@@ -17,6 +18,7 @@ import { getWeekRange } from '@/lib/utils'
 import { RoutineListSkeleton } from '@/components/Skeleton'
 
 export default function RoutineListPage() {
+  const router = useRouter()
   const supabase = createClient()
   const { user, loading: authLoading } = useAuth()
   const [routines, setRoutines] = useState<Routine[]>([])
@@ -40,7 +42,7 @@ export default function RoutineListPage() {
   useEffect(() => {
     if (authLoading) return
     if (!user) {
-      setLoading(false)
+      router.replace('/login')
       return
     }
     loadRoutines(user.id)

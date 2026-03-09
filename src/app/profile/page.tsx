@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
@@ -9,8 +10,15 @@ import Input from '@/components/Input'
 import Card from '@/components/Card'
 
 export default function ProfilePage() {
-  const { user, profile, signOut, refreshProfile } = useAuth()
+  const router = useRouter()
+  const { user, profile, signOut, refreshProfile, loading: authLoading } = useAuth()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace('/login')
+    }
+  }, [authLoading, user, router])
   const [nickname, setNickname] = useState(profile?.nickname || '')
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)

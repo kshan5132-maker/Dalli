@@ -30,7 +30,7 @@ export default function GroupListPage() {
   useEffect(() => {
     if (authLoading) return
     if (!user) {
-      setLoading(false)
+      router.replace('/login')
       return
     }
     loadGroups(user.id)

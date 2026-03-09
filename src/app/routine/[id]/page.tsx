@@ -52,7 +52,7 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     if (authLoading) return
     if (!user) {
-      setLoading(false)
+      router.replace('/login')
       return
     }
     loadRoutineDetail(user.id)

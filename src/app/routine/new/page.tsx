@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
@@ -16,8 +16,14 @@ const verificationTypes: VerificationType[] = ['photo', 'check']
 
 export default function NewRoutinePage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace('/login')
+    }
+  }, [authLoading, user, router])
   const [title, setTitle] = useState('')
   const [frequency, setFrequency] = useState<RoutineFrequency>('daily')
   const [verificationType, setVerificationType] = useState<VerificationType>('photo')

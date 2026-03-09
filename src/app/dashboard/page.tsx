@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
 import Header from '@/components/Header'
@@ -33,6 +34,7 @@ type GroupSummary = {
 }
 
 export default function DashboardPage() {
+  const router = useRouter()
   const supabase = createClient()
   const { user, loading: authLoading } = useAuth()
   const [stats, setStats] = useState<RoutineStats[]>([])
@@ -46,8 +48,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (authLoading) return
     if (!user) {
-      setLoading(false)
-      setError('로그인이 필요합니다.')
+      router.replace('/login')
       return
     }
     loadDashboard(user.id)

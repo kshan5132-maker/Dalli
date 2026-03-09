@@ -46,8 +46,7 @@ export default function VerifyPage() {
   useEffect(() => {
     if (authLoading) return
     if (!user) {
-      setLoading(false)
-      setError('로그인이 필요합니다.')
+      router.replace('/login')
       return
     }
     loadData(user.id)

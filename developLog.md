@@ -1,5 +1,47 @@
 # Dalli 개발 로그
 
+## [Feature - Group Settings & Delete] - 2026-03-09
+
+### 추가된 기능
+
+#### 1. 그룹 설정 페이지 (`/group/[id]/settings`)
+- **관리자 전용** 페이지: 비관리자 접근 시 그룹 상세로 리다이렉트
+- **그룹 정보 수정**: 이름, 설명, 벌금, 정산 주기/요일 편집
+- **초대 코드 표시**: 초대 코드 확인 및 클립보드 복사
+- **그룹 루틴 관리**: 루틴 추가 (모달) / 삭제 기능
+- **멤버 관리**: 멤버 목록 확인, 비관리자 멤버 강퇴 기능 (확인 모달)
+- **그룹 삭제**: 위험 구역에 삭제 버튼, 그룹 이름 입력 확인 모달
+
+#### 2. 그룹 상세 페이지 설정 아이콘
+- 관리자(`myRole === 'admin'`)에게만 헤더에 ⚙️ 설정 아이콘 표시
+- 기존 공유 아이콘 옆에 배치, `/group/[id]/settings`로 이동
+
+#### 3. 그룹 삭제 기능
+- 관리자만 삭제 가능 (서버 사이드 admin 재확인)
+- 확인 모달: 그룹 이름을 정확히 입력해야 삭제 버튼 활성화
+- DB `ON DELETE CASCADE` 설정으로 관련 데이터 자동 정리:
+  - group_members, routines, verifications, messages 모두 삭제
+- 삭제 후 `/group` 목록으로 리다이렉트
+
+#### 4. 멤버 강퇴 기능
+- 강퇴 시 해당 멤버의 `group_members` 레코드 삭제
+- 강퇴 시 해당 멤버의 그룹 루틴(`routines.type='group'`)도 함께 삭제
+- 관리자 자신과 다른 관리자는 강퇴 대상에서 제외
+
+### 변경된 파일
+1. `src/app/group/[id]/settings/page.tsx` - 신규 (그룹 설정 페이지)
+2. `src/app/group/[id]/page.tsx` - 설정 아이콘 추가, Link import 추가
+
+### 사용된 컴포넌트
+- Header, Card, Button, Input, Modal, ErrorRetry, GroupDetailSkeleton
+- 기존 디자인 시스템과 일관된 UI/UX
+
+### 빌드 결과
+- TypeScript 에러: 0
+- 빌드 성공
+
+---
+
 ## [Critical Fix - Auth Lock Conflict] - 2026-03-08
 
 ### 진단 결과
