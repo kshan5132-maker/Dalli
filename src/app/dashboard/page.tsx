@@ -9,9 +9,12 @@ import Header from '@/components/Header'
 import Card from '@/components/Card'
 import type { Routine, Profile } from '@/lib/types'
 import ErrorRetry from '@/components/ErrorRetry'
+import Modal from '@/components/Modal'
+import Button from '@/components/Button'
 import { DashboardSkeleton } from '@/components/Skeleton'
 import { FREQUENCY_TARGETS, FREQUENCY_LABELS } from '@/lib/types'
 import { getWeekRange, getMonthRange } from '@/lib/utils'
+import { isDevMode } from '@/lib/fetch'
 
 type RoutineStats = {
   routine: Routine
@@ -31,6 +34,7 @@ type GroupSummary = {
   myWeeklyDone: number
   myWeeklyTarget: number
   topMember: { nickname: string; rate: number } | null
+  allMembers?: { userId: string; nickname: string; done: number; target: number; rate: number }[]
 }
 
 export default function DashboardPage() {
@@ -38,11 +42,15 @@ export default function DashboardPage() {
   const supabase = createClient()
   const { user, loading: authLoading } = useAuth()
   const [stats, setStats] = useState<RoutineStats[]>([])
-  const [weeklyData, setWeeklyData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0])
+  const [personalWeeklyData, setPersonalWeeklyData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0])
+  const [groupWeeklyData, setGroupWeeklyData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0])
   const [groupSummaries, setGroupSummaries] = useState<GroupSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'personal' | 'group'>('personal')
+  // 그룹 순위 팝업
+  const [rankPopup, setRankPopup] = useState<GroupSummary | null>(null)
+  const [rankMembers, setRankMembers] = useState<{ nickname: string; rate: number; userId: string; done: number; target: number }[]>([])
 
   // useAuth()에서 인증 정보 가져오기
   useEffect(() => {
@@ -139,20 +147,43 @@ export default function DashboardPage() {
         return
       }
 
-      const dailyCounts = [0, 0, 0, 0, 0, 0, 0]
+      // 개인/그룹 루틴 ID 세트 생성
+      const personalRoutineIds = new Set(routines.filter(r => (r as Routine).type === 'personal').map(r => r.id))
+      const groupRoutineIds = new Set(routines.filter(r => (r as Routine).type === 'group').map(r => r.id))
+
+      const personalDailyCounts = [0, 0, 0, 0, 0, 0, 0]
+      const groupDailyCounts = [0, 0, 0, 0, 0, 0, 0]
       const monthlyV = (monthlyVerifications || []) as { routine_id: string; verified_at: string }[]
       const weeklyVerifs = monthlyV.filter((v) => {
         const d = new Date(v.verified_at)
         return d >= weekStart && d <= weekEnd
       })
 
-      weeklyVerifs.forEach((v) => {
-        const d = new Date(v.verified_at)
-        const dayOfWeek = d.getDay()
-        const idx = dayOfWeek === 0 ? 6 : dayOfWeek - 1
-        dailyCounts[idx]++
-      })
-      setWeeklyData(dailyCounts)
+      // 같은 날 같은 루틴 중복 카운트 방지 (DEV_MODE 제외)
+      if (isDevMode) {
+        weeklyVerifs.forEach((v) => {
+          const d = new Date(v.verified_at)
+          const dayOfWeek = d.getDay()
+          const idx = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+          if (personalRoutineIds.has(v.routine_id)) personalDailyCounts[idx]++
+          if (groupRoutineIds.has(v.routine_id)) groupDailyCounts[idx]++
+        })
+      } else {
+        const seen = new Set<string>()
+        weeklyVerifs.forEach((v) => {
+          const dayKey = new Date(v.verified_at).toDateString()
+          const uniqueKey = `${v.routine_id}_${dayKey}`
+          if (seen.has(uniqueKey)) return
+          seen.add(uniqueKey)
+          const d = new Date(v.verified_at)
+          const dayOfWeek = d.getDay()
+          const idx = dayOfWeek === 0 ? 6 : dayOfWeek - 1
+          if (personalRoutineIds.has(v.routine_id)) personalDailyCounts[idx]++
+          if (groupRoutineIds.has(v.routine_id)) groupDailyCounts[idx]++
+        })
+      }
+      setPersonalWeeklyData(personalDailyCounts)
+      setGroupWeeklyData(groupDailyCounts)
 
       const daysInMonth = monthEnd.getDate()
       const weeksInMonth = Math.ceil(daysInMonth / 7)
@@ -160,8 +191,18 @@ export default function DashboardPage() {
 
       const routineStats: RoutineStats[] = (routines as Routine[]).map((routine) => {
         const weeklyTarget = FREQUENCY_TARGETS[routine.frequency]
-        const weeklyDone = weeklyVerifs.filter((v) => v.routine_id === routine.id).length
-        const monthlyDone = monthlyV.filter((v) => v.routine_id === routine.id).length
+        // 같은 날 같은 루틴 → 1회만 카운트
+        let weeklyDone: number
+        let monthlyDone: number
+        if (isDevMode) {
+          weeklyDone = weeklyVerifs.filter((v) => v.routine_id === routine.id).length
+          monthlyDone = monthlyV.filter((v) => v.routine_id === routine.id).length
+        } else {
+          const weeklyDays = new Set(weeklyVerifs.filter(v => v.routine_id === routine.id).map(v => new Date(v.verified_at).toDateString()))
+          weeklyDone = weeklyDays.size
+          const monthlyDays = new Set(monthlyV.filter(v => v.routine_id === routine.id).map(v => new Date(v.verified_at).toDateString()))
+          monthlyDone = monthlyDays.size
+        }
         const monthlyTarget = weeklyTarget * weeksInMonth
 
         let streak = 0
@@ -261,6 +302,7 @@ export default function DashboardPage() {
             myWeeklyDone: myData?.done || 0,
             myWeeklyTarget: myData?.target || 0,
             topMember,
+            allMembers: memberRates,
           })
         }
 
@@ -280,6 +322,7 @@ export default function DashboardPage() {
   const totalRate = totalWeeklyTarget > 0 ? Math.round((totalWeeklyDone / totalWeeklyTarget) * 100) : 0
   const maxStreak = filteredStats.length > 0 ? Math.max(...filteredStats.map((s) => s.streak)) : 0
 
+  const weeklyData = tab === 'personal' ? personalWeeklyData : groupWeeklyData
   const dayLabels = ['월', '화', '수', '목', '금', '토', '일']
   const maxDailyCount = Math.max(...weeklyData, 1)
 
@@ -381,7 +424,7 @@ export default function DashboardPage() {
             <h3 className="text-sm font-bold mb-3">그룹별 내 순위</h3>
             <div className="space-y-3">
               {groupSummaries.map((gs) => (
-                <Link key={gs.groupId} href={`/group/${gs.groupId}`}>
+                <div key={gs.groupId} onClick={() => { setRankPopup(gs); setRankMembers(gs.allMembers || []) }} className="cursor-pointer">
                   <Card hover className="mb-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
@@ -417,7 +460,7 @@ export default function DashboardPage() {
                       </p>
                     )}
                   </Card>
-                </Link>
+                </div>
               ))}
             </div>
           </div>
@@ -475,6 +518,37 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* 그룹 순위 팝업 */}
+      <Modal isOpen={!!rankPopup} onClose={() => { setRankPopup(null); setRankMembers([]) }} title={rankPopup ? `${rankPopup.groupName} 순위` : ''}>
+        <div className="space-y-3">
+          {rankMembers.map((m, idx) => {
+            const isMe = m.userId === user?.id
+            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
+            return (
+              <div key={m.userId} className={`flex items-center gap-3 p-3 rounded-xl ${isMe ? 'bg-primary/10 border border-primary/20' : 'bg-bg'}`}>
+                <span className="text-lg font-bold w-8 text-center shrink-0">
+                  {medal || `${idx + 1}`}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-semibold truncate ${isMe ? 'text-primary' : ''}`}>
+                    {m.nickname}{isMe ? ' (나)' : ''}
+                  </p>
+                  <p className="text-xs text-text-muted">{m.done}/{m.target}회 완료</p>
+                </div>
+                <span className={`text-sm font-bold ${m.rate >= 100 ? 'text-success' : m.rate >= 50 ? 'text-primary' : 'text-danger'}`}>
+                  {m.rate}%
+                </span>
+              </div>
+            )
+          })}
+          {rankPopup && (
+            <Link href={`/group/${rankPopup.groupId}`}>
+              <Button fullWidth variant="outline" className="mt-2">그룹 보기</Button>
+            </Link>
+          )}
+        </div>
+      </Modal>
     </>
   )
 }

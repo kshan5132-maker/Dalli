@@ -1,5 +1,129 @@
 # Dalli 개발 로그
 
+## [Beta 1.0.6 Update] - 2026-03-10
+
+### 버전: Beta 1.0.6
+
+### 수정된 버그 (4건)
+
+#### 버그 1: 카메라 버튼이 갤러리를 여는 문제
+- **증상**: 인증 페이지에서 "카메라로 촬영" 버튼 클릭 시 갤러리가 열림
+- **원인**: 하나의 `<input type="file">`에 `capture` 속성을 동적으로 토글하면 일부 기기에서 작동하지 않음
+- **수정**: 카메라용/갤러리용 `<input>` 2개로 분리
+  - `cameraInputRef`: `accept="image/*" capture="environment"`
+  - `galleryInputRef`: `accept="image/jpeg,image/png,image/heic,image/webp"` (capture 없음)
+- **파일**: `src/app/verify/page.tsx`
+
+#### 버그 2 (Critical): 같은 날 같은 루틴 인증이 중복 카운트
+- **증상**: 같은 날 같은 루틴을 여러 번 인증하면 횟수가 중복으로 올라감
+- **원인**: 인증 횟수를 레코드 수로 카운트 → 하루에 여러 번 인증하면 모두 합산
+- **수정**: 고유 날짜(day)별로 카운트하는 패턴 적용
+  ```ts
+  const routineDays: Record<string, Set<string>> = {}
+  vList.forEach((v) => {
+    const dayKey = new Date(v.verified_at).toDateString()
+    if (!routineDays[v.routine_id]) routineDays[v.routine_id] = new Set()
+    routineDays[v.routine_id].add(dayKey)
+  })
+  // days.size = 고유 일수
+  ```
+- **DEV_MODE 예외**: 개발 모드에서는 기존 방식(전체 카운트) 유지
+- **파일**: `src/app/verify/page.tsx`, `src/app/page.tsx`, `src/app/routine/page.tsx`, `src/app/dashboard/page.tsx`
+
+#### 버그 3: 그룹 루틴 데이터가 개인 대시보드 탭에 표시
+- **증상**: 대시보드 "개인" 탭에서 그룹 루틴 통계가 함께 표시됨
+- **원인**: `weeklyData` 상태가 개인/그룹 구분 없이 전체 데이터를 저장
+- **수정**: `personalWeeklyData`와 `groupWeeklyData`로 분리, 탭 선택에 따라 표시
+- **파일**: `src/app/dashboard/page.tsx`
+
+#### 버그 4: 그룹 설명 줄바꿈이 렌더링되지 않음
+- **증상**: 그룹 설명에 입력한 줄바꿈(\n)이 한 줄로 표시됨
+- **수정**: `whitespace-pre-wrap` CSS 클래스 적용
+- **파일**: `src/app/group/[id]/page.tsx`
+
+### 추가된 기능 (7건)
+
+#### Feature 5: 프로필 사진 업로드/표시
+- Supabase Storage `avatars` 버킷에 `profiles/{userId}/avatar.{ext}` 경로로 업로드
+- `upsert: true`로 기존 사진 덮어쓰기
+- 캐시 버스터 `?t=${Date.now()}` 적용
+- 프로필 페이지에서 사진 변경 가능 (hover 오버레이 + 카메라 아이콘)
+- 홈 화면 프로필 아바타에 사진 표시 (없으면 이니셜 폴백)
+- **파일**: `src/app/profile/page.tsx`, `src/app/page.tsx`
+
+#### Feature 6: 피드 사진 클릭 확대 (Photo Viewer)
+- 인증 피드의 사진 클릭 시 풀스크린 모달로 확대
+- 다크 오버레이 + 닉네임/날짜/메모 표시
+- 모달 외부 클릭 또는 X 버튼으로 닫기
+- **파일**: `src/app/group/[id]/page.tsx`
+
+#### Feature 7: 그룹 프로필 사진
+- 그룹 생성 시 사진 선택 가능 (미리보기 포함)
+- 그룹 설정에서 관리자가 사진 변경 가능
+- `groups.avatar_url` 컬럼 추가 (DB 스키마 변경)
+- 그룹 목록, 그룹 상세 헤더에 그룹 사진 표시
+- **파일**: `src/app/group/new/page.tsx`, `src/app/group/[id]/settings/page.tsx`, `src/app/group/page.tsx`, `src/app/group/[id]/page.tsx`
+
+#### Feature 8: 그룹 설명 "더보기" 접기/펼치기
+- 긴 설명은 2줄까지만 표시 (`line-clamp-2`)
+- "더보기"/"접기" 토글 버튼
+- 60자 이상일 때 버튼 표시
+- **파일**: `src/app/group/[id]/page.tsx`
+
+#### Feature 9: 주간 결과 팝업
+- 새 주가 시작된 후 처음 접속한 사용자에게 지난 주 그룹 결과 팝업 표시
+- `localStorage`에 `dalli_lastCheckedWeek` 키로 마지막 확인 주 저장
+- 그룹 멤버 순위 표시 (🥇🥈🥉 메달 + 달성률)
+- 미달성자에 "벌금" 표시
+- **파일**: `src/app/page.tsx`
+
+#### Feature 10: 미션 현황 매트릭스
+- 그룹 상세 "미션현황" 탭 전면 개편
+- 루틴별 × 멤버별 × 요일별(월~일) 매트릭스 그리드
+- ✅(인증)/❌(미인증)/-(미래) 표시
+- 오늘 요일 강조 표시
+- 하단 벌금 대상자 요약 카드
+- **파일**: `src/app/group/[id]/page.tsx`
+
+#### Feature 11: 대시보드 그룹 순위 팝업
+- 대시보드 그룹 카드 클릭 시 페이지 이동 대신 순위 팝업 표시
+- 멤버별 달성률/완료 횟수 + 메달 아이콘
+- 본인 강조 표시 ("나")
+- "그룹 보기" 버튼으로 그룹 상세 이동
+- **파일**: `src/app/dashboard/page.tsx`
+
+### DB 스키마 변경
+- `groups` 테이블에 `avatar_url TEXT` 컬럼 추가
+- `avatars` 스토리지 버킷 생성 (public)
+- 스토리지 정책: 인증 사용자 업로드/조회/수정/삭제
+- **파일**: `src/db/schema_v4.sql` (신규)
+
+### 기타 개선
+- 채팅 아바타에 프로필 사진 표시 (기존 이니셜 → 사진 우선)
+- 피드 카드 아바타에 프로필 사진 표시
+- 멤버 목록에 프로필 사진 + 역할 뱃지(관리자/멤버) 표시
+- `types.ts`에 Group 타입 `avatar_url` 필드 추가
+- 프로필 페이지 버전 v1.0.6으로 업데이트
+
+### 변경된 파일 전체 목록
+1. `src/lib/types.ts` - Group 타입에 avatar_url 추가
+2. `src/db/schema_v4.sql` - 신규 (DB 마이그레이션)
+3. `src/app/verify/page.tsx` - 카메라 분리 + 고유 일수 카운트
+4. `src/app/page.tsx` - 고유 일수 카운트 + 프로필 사진 + 주간 결과 팝업
+5. `src/app/routine/page.tsx` - 고유 일수 카운트
+6. `src/app/dashboard/page.tsx` - 개인/그룹 데이터 분리 + 순위 팝업
+7. `src/app/group/[id]/page.tsx` - 설명 줄바꿈 + 사진 뷰어 + 매트릭스 + 그룹 아바타 + 채팅 아바타
+8. `src/app/profile/page.tsx` - 프로필 사진 업로드 + v1.0.6
+9. `src/app/group/page.tsx` - 그룹 목록 아바타 표시
+10. `src/app/group/[id]/settings/page.tsx` - 그룹 사진 업로드
+11. `src/app/group/new/page.tsx` - 그룹 생성 시 사진 선택
+
+### 빌드 결과
+- TypeScript 에러: 0
+- 빌드 성공
+
+---
+
 ## [Critical Fix - Group Routine Sharing + Edit] - 2026-03-09
 
 ### 버전: Beta 1.0.5

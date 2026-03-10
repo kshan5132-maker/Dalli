@@ -54,6 +54,18 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const [editMemoText, setEditMemoText] = useState('')
   const [savingMemo, setSavingMemo] = useState(false)
 
+  // Photo viewer state
+  const [viewingPhoto, setViewingPhoto] = useState<(Verification & { profiles: Profile; routines: Routine }) | null>(null)
+
+  // Description expand state
+  const [descExpanded, setDescExpanded] = useState(false)
+
+  // Group routines for mission matrix
+  const [groupRoutines, setGroupRoutines] = useState<Routine[]>([])
+
+  // Weekly verifications with day info for mission matrix
+  const [weeklyVerifMatrix, setWeeklyVerifMatrix] = useState<{ user_id: string; routine_id: string; verified_at: string }[]>([])
+
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
@@ -124,7 +136,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       console.log('[Dalli] [GroupDetail] weeklyVerifications 쿼리 시작')
       const { data: weeklyVerifications } = await supabase
         .from('verifications')
-        .select('user_id, routine_id')
+        .select('user_id, routine_id, verified_at')
         .eq('group_id', id)
         .gte('verified_at', start.toISOString())
         .lte('verified_at', end.toISOString())
@@ -132,6 +144,8 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
       // 그룹 루틴은 모든 멤버에게 공유됨 → 목표 횟수는 전체 그룹 루틴의 frequency 합산
       const allGroupRoutines = groupRoutines || []
+      setGroupRoutines(allGroupRoutines as Routine[])
+      setWeeklyVerifMatrix((weeklyVerifications || []) as { user_id: string; routine_id: string; verified_at: string }[])
       const sharedWeeklyTarget = allGroupRoutines.reduce(
         (sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0),
         0
@@ -416,21 +430,42 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       <div className={`px-4 pt-4 ${activeTab === 'chat' ? 'flex flex-col h-[calc(100dvh-56px)]' : ''}`}>
         {/* Group info card */}
         <Card className="mb-4">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0">
+              {group.avatar_url ? (
+                <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-lg">
+                  {group.name.charAt(0)}
+                </div>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
               <p className="text-xs text-text-muted">멤버 {members.length}명</p>
               <p className="text-xs text-warning font-medium mt-0.5">
                 벌금 {group.penalty_amount.toLocaleString()}원
               </p>
             </div>
             {myRole === 'admin' && (
-              <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-full">
+              <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-semibold rounded-full shrink-0">
                 관리자
               </span>
             )}
           </div>
           {group.description && (
-            <p className="text-xs text-text-secondary mt-2">{group.description}</p>
+            <div className="mt-2">
+              <p className={`text-xs text-text-secondary whitespace-pre-wrap ${!descExpanded ? 'line-clamp-2' : ''}`}>
+                {group.description}
+              </p>
+              {group.description.length > 60 && (
+                <button
+                  onClick={() => setDescExpanded(!descExpanded)}
+                  className="text-xs text-primary font-medium mt-1"
+                >
+                  {descExpanded ? '접기' : '더보기'}
+                </button>
+              )}
+            </div>
           )}
         </Card>
 
@@ -466,8 +501,14 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 return (
                   <Card key={v.id}>
                     <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold shrink-0">
-                        {v.profiles?.nickname?.charAt(0) || '?'}
+                      <div className="w-9 h-9 rounded-full overflow-hidden shrink-0">
+                        {v.profiles?.avatar_url ? (
+                          <img src={v.profiles.avatar_url} alt={v.profiles.nickname || ''} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold">
+                            {v.profiles?.nickname?.charAt(0) || '?'}
+                          </div>
+                        )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
@@ -519,7 +560,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                           <p className="text-sm text-text mt-2">{v.memo}</p>
                         )}
                         {v.photo_url && (
-                          <div className="mt-2 rounded-xl overflow-hidden">
+                          <div className="mt-2 rounded-xl overflow-hidden cursor-pointer" onClick={() => setViewingPhoto(v)}>
                             <img
                               src={v.photo_url}
                               alt="인증 사진"
@@ -544,125 +585,138 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 멤버가 없습니다
               </div>
             ) : (
-              memberStats.length > 0
-                ? memberStats.map((stat) => (
-                    <Card key={stat.profile.id} className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold shrink-0">
-                        {stat.profile.nickname?.charAt(0) || '?'}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold truncate">
-                            {stat.profile.nickname || '알 수 없음'}
-                          </p>
-                          {members.find((m) => m.user_id === stat.userId)?.role === 'admin' && (
-                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] font-semibold rounded-full shrink-0">
-                              관리자
-                            </span>
-                          )}
+              members.map((member) => {
+                const isAdmin = member.role === 'admin'
+                return (
+                  <Card key={member.user_id} className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full overflow-hidden shrink-0">
+                      {member.profiles?.avatar_url ? (
+                        <img src={member.profiles.avatar_url} alt={member.profiles.nickname || ''} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold">
+                          {member.profiles?.nickname?.charAt(0) || '?'}
                         </div>
-                        <p className="text-xs text-text-muted mt-0.5">
-                          주간 {stat.weeklyDone}/{stat.weeklyTarget}회 완료
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold truncate">
+                          {member.profiles?.nickname || '알 수 없음'}
                         </p>
+                        {isAdmin && (
+                          <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] font-semibold rounded-full shrink-0">
+                            관리자
+                          </span>
+                        )}
+                        {!isAdmin && (
+                          <span className="px-1.5 py-0.5 bg-bg text-text-muted text-[10px] font-medium rounded-full shrink-0">
+                            멤버
+                          </span>
+                        )}
                       </div>
-                      <div className="text-right shrink-0">
-                        <p
-                          className={`text-lg font-bold ${
-                            stat.rate >= 100
-                              ? 'text-success'
-                              : stat.rate >= 50
-                                ? 'text-primary'
-                                : 'text-danger'
-                          }`}
-                        >
-                          {stat.weeklyTarget > 0 ? `${stat.rate}%` : '-'}
-                        </p>
-                        <p className="text-[10px] text-text-muted">주간 달성률</p>
-                      </div>
-                    </Card>
-                  ))
-                : members.map((member) => (
-                    <Card key={member.user_id} className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-sm font-bold shrink-0">
-                        {member.profiles?.nickname?.charAt(0) || '?'}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold truncate">
-                            {member.profiles?.nickname || '알 수 없음'}
-                          </p>
-                          {member.role === 'admin' && (
-                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] font-semibold rounded-full shrink-0">
-                              관리자
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <span className="text-xs text-text-muted shrink-0">루틴 없음</span>
-                    </Card>
-                  ))
+                    </div>
+                    {member.user_id === user?.id && (
+                      <span className="text-xs text-primary font-medium shrink-0">나</span>
+                    )}
+                  </Card>
+                )
+              })
             )}
           </div>
         )}
 
         {/* ====== Mission Status Tab ====== */}
-        {activeTab === 'mission' && (
-          <div className="space-y-3 pb-6">
-            <Card className="bg-gradient-to-br from-warning/10 to-warning/5 border-warning/20">
-              <p className="text-sm font-bold text-warning mb-1">이번 주 미션 달성 현황</p>
-              <p className="text-xs text-text-secondary">
-                주간 목표 미달성 시 벌금 {group.penalty_amount.toLocaleString()}원
-              </p>
-            </Card>
+        {activeTab === 'mission' && (() => {
+          const { start: weekStart } = getWeekRange()
+          const dayLabels = ['월', '화', '수', '목', '금', '토', '일']
+          // 요일별 날짜 계산
+          const weekDates = dayLabels.map((_, idx) => {
+            const d = new Date(weekStart)
+            d.setDate(weekStart.getDate() + idx)
+            return d
+          })
+          const today = new Date()
+          const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1
 
-            {memberStats.length === 0 ? (
-              <div className="text-center py-8 text-text-muted text-sm">
-                그룹에 연결된 루틴이 없습니다
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {memberStats.map((stat) => (
-                  <Card key={stat.profile.id} className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold shrink-0">
-                      {stat.profile.nickname?.charAt(0) || '?'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold truncate">
-                        {stat.profile.nickname || '알 수 없음'}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <div className="flex-1 h-1.5 bg-bg rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${
-                              stat.rate >= 100 ? 'bg-success' : stat.rate >= 50 ? 'bg-primary' : 'bg-danger'
-                            }`}
-                            style={{ width: `${Math.min(stat.rate, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-text-muted shrink-0">
-                          {stat.rate}%
-                        </span>
+          return (
+            <div className="space-y-3 pb-6">
+              <Card className="bg-gradient-to-br from-warning/10 to-warning/5 border-warning/20">
+                <p className="text-sm font-bold text-warning mb-1">이번 주 미션 달성 현황</p>
+                <p className="text-xs text-text-secondary">
+                  주간 목표 미달성 시 벌금 {group.penalty_amount.toLocaleString()}원
+                </p>
+              </Card>
+
+              {groupRoutines.length === 0 ? (
+                <div className="text-center py-8 text-text-muted text-sm">
+                  그룹에 연결된 루틴이 없습니다
+                </div>
+              ) : (
+                <>
+                  {/* 루틴별 달성 매트릭스 */}
+                  {groupRoutines.map((routine) => (
+                    <Card key={routine.id}>
+                      <p className="text-sm font-bold mb-2">{routine.title}</p>
+                      {/* 요일 헤더 */}
+                      <div className="grid grid-cols-8 gap-1 text-center mb-1">
+                        <div className="text-[10px] text-text-muted"></div>
+                        {dayLabels.map((d, i) => (
+                          <div key={i} className={`text-[10px] font-medium ${i === todayIdx ? 'text-primary' : 'text-text-muted'}`}>{d}</div>
+                        ))}
                       </div>
-                    </div>
-                    {stat.penalty && stat.weeklyTarget > 0 ? (
-                      <span className="px-2.5 py-1 bg-danger/10 text-danger text-xs font-bold rounded-full shrink-0">
-                        벌금 {group.penalty_amount.toLocaleString()}원
-                      </span>
-                    ) : stat.weeklyTarget > 0 ? (
-                      <span className="px-2.5 py-1 bg-success/10 text-success text-xs font-bold rounded-full shrink-0">
-                        달성 완료
-                      </span>
+                      {/* 멤버별 행 */}
+                      {members.map((member) => (
+                        <div key={member.user_id} className="grid grid-cols-8 gap-1 items-center mb-0.5">
+                          <p className="text-[10px] text-text-secondary truncate pr-1">{member.profiles?.nickname?.slice(0, 3) || '?'}</p>
+                          {weekDates.map((date, dayIdx) => {
+                            const dayStr = date.toDateString()
+                            const hasVerif = weeklyVerifMatrix.some(
+                              (v) => v.user_id === member.user_id && v.routine_id === routine.id && new Date(v.verified_at).toDateString() === dayStr
+                            )
+                            const isFuture = dayIdx > todayIdx
+                            return (
+                              <div key={dayIdx} className="flex items-center justify-center h-6">
+                                {isFuture ? (
+                                  <span className="text-[10px] text-text-muted/50">-</span>
+                                ) : hasVerif ? (
+                                  <span className="text-sm">✅</span>
+                                ) : (
+                                  <span className="text-sm">❌</span>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </Card>
+                  ))}
+
+                  {/* 벌금 대상자 요약 */}
+                  <Card className="border-danger/20">
+                    <p className="text-sm font-bold text-danger mb-2">벌금 대상자</p>
+                    {memberStats.filter(s => s.penalty && s.weeklyTarget > 0).length === 0 ? (
+                      <p className="text-xs text-text-muted">현재 벌금 대상자가 없습니다</p>
                     ) : (
-                      <span className="px-2.5 py-1 bg-bg text-text-muted text-xs font-medium rounded-full shrink-0">
-                        루틴 없음
-                      </span>
+                      <div className="space-y-1">
+                        {memberStats.filter(s => s.penalty && s.weeklyTarget > 0).map((stat) => (
+                          <div key={stat.userId} className="flex items-center justify-between py-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm">{stat.profile.nickname || '알 수 없음'}</span>
+                              <span className="text-xs text-text-muted">{stat.weeklyDone}/{stat.weeklyTarget}회</span>
+                            </div>
+                            <span className="text-xs font-bold text-danger">
+                              벌금 {group.penalty_amount.toLocaleString()}원
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </Card>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+                </>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ====== Chat Tab ====== */}
         {activeTab === 'chat' && (
@@ -686,8 +740,14 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                       <div className={`flex gap-2 max-w-[80%] ${isMine ? 'flex-row-reverse' : ''}`}>
                         {/* Avatar (others only) */}
                         {!isMine && (
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">
-                            {msg.profiles?.nickname?.charAt(0) || '?'}
+                          <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 mt-0.5">
+                            {msg.profiles?.avatar_url ? (
+                              <img src={msg.profiles.avatar_url} alt={msg.profiles.nickname || ''} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold">
+                                {msg.profiles?.nickname?.charAt(0) || '?'}
+                              </div>
+                            )}
                           </div>
                         )}
                         <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
@@ -764,6 +824,25 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           <Button fullWidth onClick={handleSaveMemo} loading={savingMemo}>저장하기</Button>
         </div>
       </Modal>
+
+      {/* Photo viewer modal */}
+      {viewingPhoto && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80" onClick={() => setViewingPhoto(null)}>
+          <button className="absolute top-4 right-4 w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-white z-10" onClick={() => setViewingPhoto(null)}>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-6 h-6">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <div className="w-full max-w-lg px-4" onClick={(e) => e.stopPropagation()}>
+            <img src={viewingPhoto.photo_url!} alt="인증 사진" className="w-full rounded-xl" />
+            <div className="mt-3 text-center text-white">
+              <p className="text-sm font-semibold">{viewingPhoto.profiles?.nickname || '알 수 없음'}</p>
+              <p className="text-xs text-white/70">{formatDate(viewingPhoto.verified_at)}</p>
+              {viewingPhoto.memo && <p className="text-sm mt-2 text-white/90">{viewingPhoto.memo}</p>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Invite modal */}
       <Modal isOpen={showInvite} onClose={() => setShowInvite(false)} title="친구 초대">

@@ -10,6 +10,8 @@ import type { Routine } from '@/lib/types'
 import { FREQUENCY_LABELS, FREQUENCY_TARGETS } from '@/lib/types'
 import { getWeekRange } from '@/lib/utils'
 import { HomeSkeleton } from '@/components/Skeleton'
+import { isDevMode } from '@/lib/fetch'
+import Modal from '@/components/Modal'
 
 function LandingPage() {
   return (
@@ -80,6 +82,11 @@ function HomePage({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
+  // Weekly results popup state
+  const [showWeeklyResult, setShowWeeklyResult] = useState(false)
+  const [weeklyResultData, setWeeklyResultData] = useState<{ nickname: string; avatar_url: string | null; rate: number; done: number; target: number; groupName: string }[]>([])
+  const [weeklyResultGroupName, setWeeklyResultGroupName] = useState('')
+
   useEffect(() => {
     if (!loading) return
     const timer = setTimeout(() => setLoading(false), 10000)
@@ -146,14 +153,29 @@ function HomePage({ userId }: { userId: string }) {
           }
 
           if (verifications) {
-            const counts: Record<string, number> = {}
             const todaySet = new Set<string>()
             const today = new Date().toDateString()
-            ;(verifications as { routine_id: string; verified_at: string }[]).forEach((v) => {
-              counts[v.routine_id] = (counts[v.routine_id] || 0) + 1
-              if (new Date(v.verified_at).toDateString() === today) todaySet.add(v.routine_id)
-            })
-            setWeeklyVerifications(counts)
+            const vList = verifications as { routine_id: string; verified_at: string }[]
+
+            if (isDevMode) {
+              const counts: Record<string, number> = {}
+              vList.forEach((v) => {
+                counts[v.routine_id] = (counts[v.routine_id] || 0) + 1
+                if (new Date(v.verified_at).toDateString() === today) todaySet.add(v.routine_id)
+              })
+              setWeeklyVerifications(counts)
+            } else {
+              const routineDays: Record<string, Set<string>> = {}
+              vList.forEach((v) => {
+                const dayKey = new Date(v.verified_at).toDateString()
+                if (!routineDays[v.routine_id]) routineDays[v.routine_id] = new Set()
+                routineDays[v.routine_id].add(dayKey)
+                if (dayKey === today) todaySet.add(v.routine_id)
+              })
+              const counts: Record<string, number> = {}
+              Object.entries(routineDays).forEach(([rid, days]) => { counts[rid] = days.size })
+              setWeeklyVerifications(counts)
+            }
             setTodayVerified(todaySet)
           }
         }
@@ -167,6 +189,104 @@ function HomePage({ userId }: { userId: string }) {
     loadData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
+
+  // Weekly results popup: check on first visit of new week
+  useEffect(() => {
+    const checkWeeklyResult = async () => {
+      try {
+        const { start } = getWeekRange()
+        const weekKey = start.toISOString().slice(0, 10)
+        const lastChecked = localStorage.getItem('dalli_lastCheckedWeek')
+        if (lastChecked === weekKey) return
+
+        // 지난 주 범위 계산
+        const lastWeekEnd = new Date(start)
+        lastWeekEnd.setDate(lastWeekEnd.getDate() - 1)
+        lastWeekEnd.setHours(23, 59, 59, 999)
+        const lastWeekStart = new Date(lastWeekEnd)
+        lastWeekStart.setDate(lastWeekStart.getDate() - 6)
+        lastWeekStart.setHours(0, 0, 0, 0)
+
+        // 내가 속한 그룹 확인
+        const { data: memberData } = await supabase
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', userId)
+
+        if (!memberData || memberData.length === 0) {
+          localStorage.setItem('dalli_lastCheckedWeek', weekKey)
+          return
+        }
+
+        // 첫 번째 그룹 기준으로 결과 표시
+        const firstGroupId = memberData[0].group_id
+        const { data: groupData } = await supabase.from('groups').select('name, penalty_amount').eq('id', firstGroupId)
+        const groupInfo = groupData?.[0]
+        if (!groupInfo) {
+          localStorage.setItem('dalli_lastCheckedWeek', weekKey)
+          return
+        }
+
+        // 그룹 루틴
+        const { data: gRoutines } = await supabase
+          .from('routines')
+          .select('*')
+          .eq('type', 'group')
+          .eq('group_id', firstGroupId)
+        if (!gRoutines || gRoutines.length === 0) {
+          localStorage.setItem('dalli_lastCheckedWeek', weekKey)
+          return
+        }
+
+        const sharedTarget = gRoutines.reduce((sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0), 0)
+
+        // 그룹 멤버
+        const { data: allMembers } = await supabase
+          .from('group_members')
+          .select('user_id, profiles(*)')
+          .eq('group_id', firstGroupId)
+
+        // 지난 주 인증
+        const { data: lastWeekVerifs } = await supabase
+          .from('verifications')
+          .select('user_id, routine_id, verified_at')
+          .eq('group_id', firstGroupId)
+          .gte('verified_at', lastWeekStart.toISOString())
+          .lte('verified_at', lastWeekEnd.toISOString())
+
+        if (!allMembers || allMembers.length === 0) {
+          localStorage.setItem('dalli_lastCheckedWeek', weekKey)
+          return
+        }
+
+        const results = (allMembers as unknown as { user_id: string; profiles: { nickname: string; avatar_url: string | null } }[]).map((m) => {
+          const memberVerifs = (lastWeekVerifs || []).filter((v) => v.user_id === m.user_id)
+          const done = memberVerifs.length
+          const rate = sharedTarget > 0 ? Math.round((done / sharedTarget) * 100) : 0
+          return {
+            nickname: m.profiles?.nickname || '알 수 없음',
+            avatar_url: m.profiles?.avatar_url || null,
+            rate,
+            done,
+            target: sharedTarget,
+            groupName: groupInfo.name,
+          }
+        })
+        results.sort((a, b) => b.rate - a.rate)
+        setWeeklyResultData(results)
+        setWeeklyResultGroupName(groupInfo.name)
+        setShowWeeklyResult(true)
+        localStorage.setItem('dalli_lastCheckedWeek', weekKey)
+      } catch (err) {
+        console.error('[Dalli] [Home] 주간 결과 체크 실패:', err)
+      }
+    }
+
+    if (!loading && userId) {
+      checkWeeklyResult()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, userId])
 
   const personalRoutines = routines.filter((r) => r.type === 'personal')
   const groupRoutines = routines.filter((r) => r.type === 'group')
@@ -211,8 +331,14 @@ function HomePage({ userId }: { userId: string }) {
           <p className="text-sm text-text-secondary">안녕하세요,</p>
           <h1 className="text-2xl font-bold">{displayName} <span className="text-lg">님</span></h1>
         </div>
-        <Link href="/profile" className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-sm">
-          {displayName.charAt(0)}
+        <Link href="/profile" className="w-10 h-10 rounded-full overflow-hidden shrink-0">
+          {profile?.avatar_url ? (
+            <img src={profile.avatar_url} alt={displayName} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-sm">
+              {displayName.charAt(0)}
+            </div>
+          )}
         </Link>
       </div>
 
@@ -266,6 +392,39 @@ function HomePage({ userId }: { userId: string }) {
           <Button fullWidth size="lg" className="shadow-lg shadow-primary/20">오늘 인증하기</Button>
         </Link>
       </div>
+
+      {/* 주간 결과 팝업 */}
+      <Modal isOpen={showWeeklyResult} onClose={() => setShowWeeklyResult(false)} title="지난 주 결과">
+        <div className="space-y-3">
+          <p className="text-sm text-text-secondary text-center">{weeklyResultGroupName} 그룹 주간 결과</p>
+          {weeklyResultData.map((r, idx) => {
+            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : ''
+            return (
+              <div key={idx} className={`flex items-center gap-3 p-3 rounded-xl ${idx === 0 ? 'bg-warning/10' : 'bg-bg'}`}>
+                <span className="text-lg w-7 text-center shrink-0">{medal || `${idx + 1}`}</span>
+                <div className="w-8 h-8 rounded-full overflow-hidden shrink-0">
+                  {r.avatar_url ? (
+                    <img src={r.avatar_url} alt={r.nickname} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold">
+                      {r.nickname.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{r.nickname}</p>
+                  <p className="text-xs text-text-muted">{r.done}/{r.target}회</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`text-sm font-bold ${r.rate >= 100 ? 'text-success' : r.rate >= 50 ? 'text-primary' : 'text-danger'}`}>{r.rate}%</p>
+                  {r.rate < 100 && <p className="text-[10px] text-danger">벌금</p>}
+                </div>
+              </div>
+            )
+          })}
+          <Button fullWidth onClick={() => setShowWeeklyResult(false)}>확인</Button>
+        </div>
+      </Modal>
     </div>
   )
 }

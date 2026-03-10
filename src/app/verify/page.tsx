@@ -24,7 +24,8 @@ export default function VerifyPage() {
   const router = useRouter()
   const supabase = createClient()
   const { user, loading: authLoading } = useAuth()
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
 
   const [activeTab, setActiveTab] = useState<TabType>('personal')
   const [personalRoutines, setPersonalRoutines] = useState<Routine[]>([])
@@ -141,18 +142,34 @@ export default function VerifyPage() {
         }
 
         if (verifications) {
-          const counts: Record<string, number> = {}
           const todaySet = new Set<string>()
           const today = new Date().toDateString()
 
-          verifications.forEach((v) => {
-            counts[v.routine_id] = (counts[v.routine_id] || 0) + 1
-            if (new Date(v.verified_at).toDateString() === today) {
-              todaySet.add(v.routine_id)
-            }
-          })
-
-          setWeeklyVerifications(counts)
+          // DEV_MODE에서는 모든 인증 횟수 카운트, 일반 모드에서는 하루 1회만 카운트
+          if (isDevMode) {
+            const counts: Record<string, number> = {}
+            verifications.forEach((v) => {
+              counts[v.routine_id] = (counts[v.routine_id] || 0) + 1
+              if (new Date(v.verified_at).toDateString() === today) {
+                todaySet.add(v.routine_id)
+              }
+            })
+            setWeeklyVerifications(counts)
+          } else {
+            // 같은 날 같은 루틴 → 1회만 카운트 (고유 날짜 수)
+            const routineDays: Record<string, Set<string>> = {}
+            verifications.forEach((v) => {
+              const dayKey = new Date(v.verified_at).toDateString()
+              if (!routineDays[v.routine_id]) routineDays[v.routine_id] = new Set()
+              routineDays[v.routine_id].add(dayKey)
+              if (dayKey === today) todaySet.add(v.routine_id)
+            })
+            const counts: Record<string, number> = {}
+            Object.entries(routineDays).forEach(([routineId, days]) => {
+              counts[routineId] = days.size
+            })
+            setWeeklyVerifications(counts)
+          }
           setTodayVerified(todaySet)
         }
       }
@@ -635,11 +652,20 @@ export default function VerifyPage() {
             <label className="block text-sm font-medium text-text mb-2">
               인증 사진
             </label>
+            {/* 카메라 전용 input (capture 속성으로 카메라 직접 열림) */}
             <input
-              ref={fileInputRef}
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            {/* 갤러리 전용 input (capture 없이 갤러리에서 선택) */}
+            <input
+              ref={galleryInputRef}
               type="file"
               accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-              capture="environment"
               onChange={handleFileChange}
               className="hidden"
             />
@@ -655,7 +681,8 @@ export default function VerifyPage() {
                   onClick={() => {
                     setPhoto(null)
                     setPhotoPreview(null)
-                    if (fileInputRef.current) fileInputRef.current.value = ''
+                    if (cameraInputRef.current) cameraInputRef.current.value = ''
+                    if (galleryInputRef.current) galleryInputRef.current.value = ''
                   }}
                   className="absolute top-2 right-2 w-8 h-8 bg-black/50 rounded-full flex items-center justify-center text-white"
                 >
@@ -672,12 +699,7 @@ export default function VerifyPage() {
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => {
-                    if (fileInputRef.current) {
-                      fileInputRef.current.setAttribute('capture', 'environment')
-                      fileInputRef.current.click()
-                    }
-                  }}
+                  onClick={() => cameraInputRef.current?.click()}
                   className="flex flex-col items-center justify-center gap-2 py-8 bg-bg border-2 border-dashed border-border rounded-xl hover:border-primary/30 transition-colors"
                 >
                   <svg
@@ -698,12 +720,7 @@ export default function VerifyPage() {
                   </span>
                 </button>
                 <button
-                  onClick={() => {
-                    if (fileInputRef.current) {
-                      fileInputRef.current.removeAttribute('capture')
-                      fileInputRef.current.click()
-                    }
-                  }}
+                  onClick={() => galleryInputRef.current?.click()}
                   className="flex flex-col items-center justify-center gap-2 py-8 bg-bg border-2 border-dashed border-border rounded-xl hover:border-primary/30 transition-colors"
                 >
                   <svg

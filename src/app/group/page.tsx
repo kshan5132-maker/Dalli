@@ -201,8 +201,14 @@ export default function GroupListPage() {
             {groups.map((group) => (
               <Card key={group.id} hover onClick={() => router.push(`/group/${group.id}`)}>
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-gradient-to-br from-primary to-primary-dark rounded-xl flex items-center justify-center text-white font-bold text-lg shrink-0">
-                    {group.name.charAt(0)}
+                  <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0">
+                    {group.avatar_url ? (
+                      <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-lg">
+                        {group.name.charAt(0)}
+                      </div>
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-base font-bold truncate">{group.name}</h3>

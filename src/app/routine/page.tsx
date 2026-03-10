@@ -16,6 +16,7 @@ import type { Routine } from '@/lib/types'
 import { FREQUENCY_LABELS, VERIFICATION_TYPE_LABELS, FREQUENCY_TARGETS } from '@/lib/types'
 import { getWeekRange } from '@/lib/utils'
 import { RoutineListSkeleton } from '@/components/Skeleton'
+import { isDevMode } from '@/lib/fetch'
 
 export default function RoutineListPage() {
   const router = useRouter()
@@ -101,7 +102,7 @@ export default function RoutineListPage() {
         console.log('[Dalli] [Routine] 인증 쿼리 시작')
         const { data: verifications, error: verifsError } = await supabase
           .from('verifications')
-          .select('routine_id')
+          .select('routine_id, verified_at')
           .eq('user_id', uid)
           .in('routine_id', allRoutineIds)
           .gte('verified_at', start.toISOString())
@@ -114,11 +115,22 @@ export default function RoutineListPage() {
         }
 
         if (verifications) {
-          const counts: Record<string, number> = {}
-          ;(verifications as { routine_id: string }[]).forEach((v) => {
-            counts[v.routine_id] = (counts[v.routine_id] || 0) + 1
-          })
-          setWeeklyVerifications(counts)
+          const vList = verifications as { routine_id: string; verified_at: string }[]
+          if (isDevMode) {
+            const counts: Record<string, number> = {}
+            vList.forEach((v) => { counts[v.routine_id] = (counts[v.routine_id] || 0) + 1 })
+            setWeeklyVerifications(counts)
+          } else {
+            const routineDays: Record<string, Set<string>> = {}
+            vList.forEach((v) => {
+              const dayKey = new Date(v.verified_at).toDateString()
+              if (!routineDays[v.routine_id]) routineDays[v.routine_id] = new Set()
+              routineDays[v.routine_id].add(dayKey)
+            })
+            const counts: Record<string, number> = {}
+            Object.entries(routineDays).forEach(([rid, days]) => { counts[rid] = days.size })
+            setWeeklyVerifications(counts)
+          }
         }
       }
     } catch (err) {

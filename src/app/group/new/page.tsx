@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
@@ -53,6 +53,11 @@ export default function NewGroupPage() {
     }
   }, [authLoading, user, router])
 
+  // Group photo
+  const groupPhotoRef = useRef<HTMLInputElement>(null)
+  const [groupPhotoFile, setGroupPhotoFile] = useState<File | null>(null)
+  const [groupPhotoPreview, setGroupPhotoPreview] = useState<string | null>(null)
+
   // Group basic info
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -68,6 +73,15 @@ export default function NewGroupPage() {
   // UI state
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const handleGroupPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setGroupPhotoFile(file)
+    const reader = new FileReader()
+    reader.onload = (ev) => setGroupPhotoPreview(ev.target?.result as string)
+    reader.readAsDataURL(file)
+  }
 
   const addRoutine = () => {
     setRoutines((prev) => [...prev, createRoutineEntry()])
@@ -146,6 +160,21 @@ export default function NewGroupPage() {
         groupId = group!.id
       }
 
+      // Upload group photo if selected
+      if (groupPhotoFile) {
+        try {
+          const ext = groupPhotoFile.name.split('.').pop() || 'jpg'
+          const filePath = `groups/${groupId}/avatar.${ext}`
+          await supabase.storage.from('avatars').upload(filePath, groupPhotoFile, { upsert: true })
+          const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filePath)
+          if (urlData?.publicUrl) {
+            await supabase.from('groups').update({ avatar_url: `${urlData.publicUrl}?t=${Date.now()}` }).eq('id', groupId)
+          }
+        } catch (photoErr) {
+          console.error('[Dalli] 그룹 사진 업로드 실패:', photoErr)
+        }
+      }
+
       // Add creator as admin member
       const { error: memberError } = await supabase.from('group_members').insert({
         group_id: groupId,
@@ -195,6 +224,40 @@ export default function NewGroupPage() {
 
       <div className="px-4 pt-6 pb-10">
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Group Photo */}
+          <div className="flex justify-center">
+            <div className="relative">
+              <div
+                className="w-20 h-20 rounded-2xl overflow-hidden cursor-pointer group"
+                onClick={() => groupPhotoRef.current?.click()}
+              >
+                {groupPhotoPreview ? (
+                  <img src={groupPhotoPreview} alt="그룹 사진" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+                      <path fillRule="evenodd" d="M1.5 6a2.25 2.25 0 012.25-2.25h16.5A2.25 2.25 0 0122.5 6v12a2.25 2.25 0 01-2.25 2.25H3.75A2.25 2.25 0 011.5 18V6zM3 16.06V18c0 .414.336.75.75.75h16.5A.75.75 0 0021 18v-1.94l-2.69-2.689a1.5 1.5 0 00-2.12 0l-.88.879.97.97a.75.75 0 11-1.06 1.06l-5.16-5.159a1.5 1.5 0 00-2.12 0L3 16.061zm10.125-7.81a1.125 1.125 0 112.25 0 1.125 1.125 0 01-2.25 0z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-white">
+                    <path d="M12 9a3.75 3.75 0 100 7.5A3.75 3.75 0 0012 9z" />
+                    <path fillRule="evenodd" d="M9.344 3.071a49.52 49.52 0 015.312 0c.967.052 1.83.585 2.332 1.39l.821 1.317c.24.383.645.643 1.11.71.386.054.77.113 1.152.177 1.432.239 2.429 1.493 2.429 2.909V18a3 3 0 01-3 3H4.5a3 3 0 01-3-3V9.574c0-1.416.997-2.67 2.429-2.909.382-.064.766-.123 1.151-.178a1.56 1.56 0 001.11-.71l.822-1.315a2.942 2.942 0 012.332-1.39zM6.75 12.75a5.25 5.25 0 1110.5 0 5.25 5.25 0 01-10.5 0z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              </div>
+              <input
+                ref={groupPhotoRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={handleGroupPhotoChange}
+              />
+            </div>
+          </div>
+          <p className="text-center text-xs text-text-muted -mt-4">그룹 사진 (선택)</p>
+
           {/* Group Name */}
           <Input
             label="그룹 이름"

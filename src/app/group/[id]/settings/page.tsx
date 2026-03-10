@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useEffect, useState, useRef, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
@@ -75,6 +75,10 @@ export default function GroupSettingsPage({ params }: { params: Promise<{ id: st
 
   // Delete routine
   const [deletingRoutineId, setDeletingRoutineId] = useState<string | null>(null)
+
+  // Group photo
+  const groupPhotoRef = useRef<HTMLInputElement>(null)
+  const [uploadingGroupPhoto, setUploadingGroupPhoto] = useState(false)
 
   useEffect(() => {
     if (authLoading) return
@@ -306,6 +310,60 @@ export default function GroupSettingsPage({ params }: { params: Promise<{ id: st
     }
   }
 
+  // -- Upload group photo --
+  const handleGroupPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !user) return
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+    if (!allowedTypes.includes(file.type)) {
+      setError('JPG, PNG, WebP 형식의 이미지만 업로드할 수 있습니다.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('5MB 이하의 이미지만 업로드할 수 있습니다.')
+      return
+    }
+
+    setUploadingGroupPhoto(true)
+    setError('')
+
+    try {
+      const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg'
+      const fileName = `groups/${id}/avatar.${ext}`
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, file, { upsert: true })
+
+      if (uploadError) {
+        setError('사진 업로드에 실패했습니다.')
+        setUploadingGroupPhoto(false)
+        return
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(fileName)
+
+      const avatarUrl = `${urlData.publicUrl}?t=${Date.now()}`
+      const { error: updateError } = await supabase
+        .from('groups')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', id)
+
+      if (updateError) {
+        setError('그룹 정보 업데이트에 실패했습니다.')
+      } else {
+        setGroup(prev => prev ? { ...prev, avatar_url: avatarUrl } : prev)
+      }
+    } catch {
+      setError('사진 업로드 중 오류가 발생했습니다.')
+    } finally {
+      setUploadingGroupPhoto(false)
+    }
+  }
+
   // -- Loading --
   if (loading) {
     return (
@@ -354,6 +412,32 @@ export default function GroupSettingsPage({ params }: { params: Promise<{ id: st
         <section>
           <h2 className="text-sm font-bold text-text mb-3">그룹 정보</h2>
           <Card className="space-y-4">
+            {/* 그룹 프로필 사진 */}
+            <div className="flex flex-col items-center">
+              <input ref={groupPhotoRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleGroupPhotoUpload} className="hidden" />
+              <button onClick={() => groupPhotoRef.current?.click()} disabled={uploadingGroupPhoto} className="relative group">
+                <div className="w-16 h-16 rounded-xl overflow-hidden">
+                  {group.avatar_url ? (
+                    <img src={group.avatar_url} alt={group.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-xl">
+                      {group.name.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div className="absolute inset-0 rounded-xl bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  {uploadingGroupPhoto ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-white">
+                      <path fillRule="evenodd" d="M1 8a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 018.07 3h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0016.07 6H17a2 2 0 012 2v7a2 2 0 01-2 2H3a2 2 0 01-2-2V8zm13.5 3a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM10 14a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                </div>
+              </button>
+              <p className="text-xs text-text-muted mt-1">사진을 눌러서 변경</p>
+            </div>
+
             <Input
               label="그룹 이름"
               value={editName}

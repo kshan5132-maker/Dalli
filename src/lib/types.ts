@@ -24,6 +24,7 @@ export type Group = {
   id: string
   name: string
   description: string | null
+  avatar_url: string | null
   invite_code: string
   penalty_amount: number
   settlement_cycle: 'weekly' | 'monthly'
