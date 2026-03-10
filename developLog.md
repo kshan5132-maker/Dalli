@@ -1,5 +1,54 @@
 # Dalli 개발 로그
 
+## [Hotfix - Beta 1.0.6] - 2026-03-10
+
+### 버전: Beta 1.0.6 Hotfix
+
+### 수정된 버그 (3건)
+
+#### Hotfix 1: 인증 횟수 중복 카운트 (추가 수정)
+- **증상**: Beta 1.0.6에서 일부 위치만 수정되어 여전히 중복 카운트 발생
+- **원인**: `routine/[id]/page.tsx`, `group/[id]/page.tsx`, `dashboard/page.tsx` 그룹 요약에서 여전히 raw `.length` 사용
+- **수정**: 프로젝트 전체 grep 후 남은 모든 위치에 고유 날짜(day) 카운트 적용
+  - `routine/[id]/page.tsx`: weeklyDone, monthlyDone, totalDone, 그룹 랭킹 모두 `new Set(...toDateString()).size` 패턴 적용
+  - `group/[id]/page.tsx`: memberStats weeklyDone 수정
+  - `dashboard/page.tsx`: 그룹 요약 memberRates 쿼리에 `verified_at` 추가, unique day 카운트 적용
+- **패턴**: `const uniqueDays = new Set(verifs.map(v => new Date(v.verified_at).toDateString())); done = uniqueDays.size`
+
+#### Hotfix 2: 주간 결과 팝업 위치 변경
+- **변경**: 홈(`page.tsx`)에서 그룹 상세(`group/[id]/page.tsx`)로 이동
+- **조건 추가**:
+  - 그룹 상세 페이지 진입 시에만 표시
+  - 이번 주에 생성된 그룹(`created_at >= 이번 주 월요일`)이면 표시하지 않음
+  - 지난 주 인증 데이터가 0건이면 표시하지 않음
+  - localStorage 키: `dalli_lastCheckedWeek_group` (값: `${groupId}_${weekStartDate}`)로 그룹별 추적
+
+#### Hotfix 3: 카메라 버튼 갤러리 열림 재확인
+- **상태**: Beta 1.0.6에서 이미 분리된 input 적용 확인 완료
+- **카메라**: `cameraInputRef` + `capture="environment"`
+- **갤러리**: `galleryInputRef` (capture 없음)
+
+### UI 변경 (2건)
+
+#### UI 1: 미션 탭 "벌금 대상자" 섹션 제거
+- **변경**: `group/[id]/page.tsx` 미션현황 탭에서 벌금 대상자 요약 Card 전체 제거
+- **이유**: 불필요한 부정적 UI 제거
+
+#### UI 2: 대시보드 그룹 탭 "이번 달" 달성률 제거
+- **변경**: `dashboard/page.tsx` 루틴별 달성률에서 그룹 탭일 때 "이번 달" 진행 바 숨김
+- **조건**: `tab === 'personal'`일 때만 이번 달 표시
+
+### 변경된 파일
+- `src/app/page.tsx` — 주간 결과 팝업 제거
+- `src/app/group/[id]/page.tsx` — 주간 결과 팝업 추가, memberStats 중복 카운트 수정, 벌금 대상자 섹션 제거
+- `src/app/routine/[id]/page.tsx` — weeklyDone/monthlyDone/totalDone/그룹 랭킹 중복 카운트 수정
+- `src/app/dashboard/page.tsx` — 그룹 요약 중복 카운트 수정, 이번 달 달성률 그룹 탭에서 숨김
+
+### 빌드 결과
+- `npx next build`: ✅ 성공 (0 에러)
+
+---
+
 ## [Beta 1.0.6 Update] - 2026-03-10
 
 ### 버전: Beta 1.0.6

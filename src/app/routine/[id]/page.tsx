@@ -82,12 +82,12 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
 
       setRoutine(routineData as unknown as RoutineDetail)
 
-      // 2. 주간 인증 횟수
+      // 2. 주간 인증 횟수 (고유 날짜 카운트)
       const { start: weekStart, end: weekEnd } = getWeekRange()
       console.log('[Dalli] [RoutineDetail] 주간 인증 쿼리 시작')
       const { data: weeklyVerifs, error: weeklyError } = await supabase
         .from('verifications')
-        .select('id')
+        .select('verified_at')
         .eq('routine_id', id)
         .eq('user_id', uid)
         .gte('verified_at', weekStart.toISOString())
@@ -98,14 +98,15 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
       } else {
         console.log('[Dalli] [RoutineDetail] 주간 인증 쿼리 완료:', weeklyVerifs?.length)
       }
-      setWeeklyDone((weeklyVerifs || []).length)
+      const weeklyUniqueDays = new Set((weeklyVerifs || []).map(v => new Date(v.verified_at).toDateString()))
+      setWeeklyDone(weeklyUniqueDays.size)
 
-      // 3. 월간 인증 횟수
+      // 3. 월간 인증 횟수 (고유 날짜 카운트)
       const { start: monthStart, end: monthEnd } = getMonthRange()
       console.log('[Dalli] [RoutineDetail] 월간 인증 쿼리 시작')
       const { data: monthlyVerifs, error: monthlyError } = await supabase
         .from('verifications')
-        .select('id')
+        .select('verified_at')
         .eq('routine_id', id)
         .eq('user_id', uid)
         .gte('verified_at', monthStart.toISOString())
@@ -116,13 +117,14 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
       } else {
         console.log('[Dalli] [RoutineDetail] 월간 인증 쿼리 완료:', monthlyVerifs?.length)
       }
-      setMonthlyDone((monthlyVerifs || []).length)
+      const monthlyUniqueDays = new Set((monthlyVerifs || []).map(v => new Date(v.verified_at).toDateString()))
+      setMonthlyDone(monthlyUniqueDays.size)
 
-      // 4. 전체 인증 횟수
+      // 4. 전체 인증 횟수 (고유 날짜 카운트)
       console.log('[Dalli] [RoutineDetail] 전체 인증 쿼리 시작')
       const { data: allVerifs, error: allError } = await supabase
         .from('verifications')
-        .select('id')
+        .select('verified_at')
         .eq('routine_id', id)
         .eq('user_id', uid)
 
@@ -131,7 +133,8 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
       } else {
         console.log('[Dalli] [RoutineDetail] 전체 인증 쿼리 완료:', allVerifs?.length)
       }
-      setTotalDone((allVerifs || []).length)
+      const totalUniqueDays = new Set((allVerifs || []).map(v => new Date(v.verified_at).toDateString()))
+      setTotalDone(totalUniqueDays.size)
 
       // 5. 스트릭 계산
       console.log('[Dalli] [RoutineDetail] 스트릭 쿼리 시작')
@@ -203,7 +206,7 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
           console.log('[Dalli] [RoutineDetail] 그룹 주간 인증 쿼리 시작')
           const { data: groupWeeklyVerifs, error: groupVerifsError } = await supabase
             .from('verifications')
-            .select('user_id')
+            .select('user_id, verified_at')
             .eq('routine_id', id)
             .gte('verified_at', weekStart.toISOString())
             .lte('verified_at', weekEnd.toISOString())
@@ -217,7 +220,10 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
           const target = FREQUENCY_TARGETS[rd.frequency]
           const rankingData: MemberRanking[] = members.map(m => {
             const memberProfile = m.profiles as unknown as Profile
-            const done = (groupWeeklyVerifs || []).filter(v => v.user_id === m.user_id).length
+            // 고유 날짜별 카운트
+            const memberVerifs = (groupWeeklyVerifs || []).filter(v => v.user_id === m.user_id)
+            const uniqueDays = new Set(memberVerifs.map(v => new Date(v.verified_at).toDateString()))
+            const done = uniqueDays.size
             return {
               userId: m.user_id,
               nickname: memberProfile?.nickname || '알 수 없음',

@@ -263,7 +263,7 @@ export default function DashboardPage() {
           console.log('[Dalli] [Dashboard] GroupVerifications 쿼리 시작', groupId)
           const { data: grVerifs } = await supabase
             .from('verifications')
-            .select('user_id, routine_id')
+            .select('user_id, routine_id, verified_at')
             .eq('group_id', groupId)
             .gte('verified_at', weekStart.toISOString())
             .lte('verified_at', weekEnd.toISOString())
@@ -272,7 +272,9 @@ export default function DashboardPage() {
           // Per-member rate calculation (그룹 루틴은 전체 멤버 공유 → 목표는 동일)
           const sharedTarget = (grRoutines || []).reduce((sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0), 0)
           const memberRates = members.map(m => {
-            const memberDone = (grVerifs || []).filter(v => v.user_id === m.user_id).length
+            const memberVerifs = (grVerifs || []).filter(v => v.user_id === m.user_id)
+            const uniqueDays = new Set(memberVerifs.map(v => new Date(v.verified_at).toDateString()))
+            const memberDone = uniqueDays.size
             const rate = sharedTarget > 0 ? Math.round((memberDone / sharedTarget) * 100) : 0
             const profile = m.profiles as unknown as Profile
             return {
@@ -500,6 +502,7 @@ export default function DashboardPage() {
                             <div className={`h-full rounded-full transition-all duration-500 ${weeklyRate >= 100 ? 'bg-success' : 'bg-primary'}`} style={{ width: `${weeklyRate}%` }} />
                           </div>
                         </div>
+                        {tab === 'personal' && (
                         <div>
                           <div className="flex items-center justify-between text-xs mb-1">
                             <span className="text-text-secondary">이번 달</span>
@@ -509,6 +512,7 @@ export default function DashboardPage() {
                             <div className={`h-full rounded-full transition-all duration-500 ${monthlyRate >= 100 ? 'bg-success' : 'bg-secondary'}`} style={{ width: `${monthlyRate}%` }} />
                           </div>
                         </div>
+                        )}
                       </div>
                     </Card>
                   </Link>

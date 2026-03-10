@@ -66,6 +66,10 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   // Weekly verifications with day info for mission matrix
   const [weeklyVerifMatrix, setWeeklyVerifMatrix] = useState<{ user_id: string; routine_id: string; verified_at: string }[]>([])
 
+  // Weekly results popup state
+  const [showWeeklyResult, setShowWeeklyResult] = useState(false)
+  const [weeklyResultData, setWeeklyResultData] = useState<{ nickname: string; avatar_url: string | null; rate: number; done: number; target: number }[]>([])
+
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
@@ -153,9 +157,12 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
       const stats: MemberStats[] = memberList.map((member) => {
         const profile = member.profiles!
-        const weeklyDone = (weeklyVerifications || []).filter(
+        // 고유 날짜별 카운트 (같은 날 여러 번 인증해도 1회만)
+        const memberVerifs = (weeklyVerifications || []).filter(
           (v) => v.user_id === member.user_id
-        ).length
+        )
+        const uniqueDays = new Set(memberVerifs.map(v => new Date(v.verified_at).toDateString()))
+        const weeklyDone = uniqueDays.size
         const rate = sharedWeeklyTarget > 0 ? Math.round((weeklyDone / sharedWeeklyTarget) * 100) : 0
 
         return {
@@ -250,6 +257,80 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       chatBottomRef.current.scrollIntoView({ behavior: 'smooth' })
     }
   }, [messages])
+
+  // -- Weekly results popup: check on group detail page entry --
+  useEffect(() => {
+    if (loading || !group || !user) return
+
+    const checkWeeklyResult = async () => {
+      try {
+        const { start } = getWeekRange()
+        const weekKey = `${id}_${start.toISOString().slice(0, 10)}`
+        const lastChecked = localStorage.getItem('dalli_lastCheckedWeek_group')
+        if (lastChecked === weekKey) return
+
+        // 이번 주에 생성된 그룹이면 팝업 표시하지 않음
+        const groupCreatedAt = new Date(group.created_at)
+        if (groupCreatedAt >= start) {
+          localStorage.setItem('dalli_lastCheckedWeek_group', weekKey)
+          return
+        }
+
+        // 지난 주 범위 계산
+        const lastWeekEnd = new Date(start)
+        lastWeekEnd.setDate(lastWeekEnd.getDate() - 1)
+        lastWeekEnd.setHours(23, 59, 59, 999)
+        const lastWeekStart = new Date(lastWeekEnd)
+        lastWeekStart.setDate(lastWeekStart.getDate() - 6)
+        lastWeekStart.setHours(0, 0, 0, 0)
+
+        // 그룹 루틴
+        if (groupRoutines.length === 0) {
+          localStorage.setItem('dalli_lastCheckedWeek_group', weekKey)
+          return
+        }
+        const sharedTarget = groupRoutines.reduce((sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0), 0)
+
+        // 지난 주 인증
+        const { data: lastWeekVerifs } = await supabase
+          .from('verifications')
+          .select('user_id, routine_id, verified_at')
+          .eq('group_id', id)
+          .gte('verified_at', lastWeekStart.toISOString())
+          .lte('verified_at', lastWeekEnd.toISOString())
+
+        if (!lastWeekVerifs || lastWeekVerifs.length === 0) {
+          localStorage.setItem('dalli_lastCheckedWeek_group', weekKey)
+          return
+        }
+
+        // 멤버별 고유 일수 카운트
+        const results = members.map((m) => {
+          const memberVerifs = lastWeekVerifs.filter((v) => v.user_id === m.user_id)
+          // 고유 날짜별 카운트
+          const uniqueDays = new Set(memberVerifs.map(v => new Date(v.verified_at).toDateString()))
+          const done = uniqueDays.size
+          const rate = sharedTarget > 0 ? Math.round((done / sharedTarget) * 100) : 0
+          return {
+            nickname: m.profiles?.nickname || '알 수 없음',
+            avatar_url: m.profiles?.avatar_url || null,
+            rate,
+            done,
+            target: sharedTarget,
+          }
+        })
+        results.sort((a, b) => b.rate - a.rate)
+        setWeeklyResultData(results)
+        setShowWeeklyResult(true)
+        localStorage.setItem('dalli_lastCheckedWeek_group', weekKey)
+      } catch (err) {
+        console.error('[Dalli] [GroupDetail] 주간 결과 체크 실패:', err)
+      }
+    }
+
+    checkWeeklyResult()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, group, user, id])
 
   // -- Send chat message --
   const handleSendMessage = async () => {
@@ -691,27 +772,6 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                     </Card>
                   ))}
 
-                  {/* 벌금 대상자 요약 */}
-                  <Card className="border-danger/20">
-                    <p className="text-sm font-bold text-danger mb-2">벌금 대상자</p>
-                    {memberStats.filter(s => s.penalty && s.weeklyTarget > 0).length === 0 ? (
-                      <p className="text-xs text-text-muted">현재 벌금 대상자가 없습니다</p>
-                    ) : (
-                      <div className="space-y-1">
-                        {memberStats.filter(s => s.penalty && s.weeklyTarget > 0).map((stat) => (
-                          <div key={stat.userId} className="flex items-center justify-between py-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm">{stat.profile.nickname || '알 수 없음'}</span>
-                              <span className="text-xs text-text-muted">{stat.weeklyDone}/{stat.weeklyTarget}회</span>
-                            </div>
-                            <span className="text-xs font-bold text-danger">
-                              벌금 {group.penalty_amount.toLocaleString()}원
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </Card>
                 </>
               )}
             </div>
@@ -864,6 +924,39 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
               {typeof window !== 'undefined' ? window.location.origin : ''}/group/invite/{group.invite_code}
             </span>
           </p>
+        </div>
+      </Modal>
+
+      {/* Weekly results popup */}
+      <Modal isOpen={showWeeklyResult} onClose={() => setShowWeeklyResult(false)} title="지난 주 결과">
+        <div className="space-y-3">
+          <p className="text-sm text-text-secondary text-center">{group.name} 그룹 주간 결과</p>
+          {weeklyResultData.map((r, idx) => {
+            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : ''
+            return (
+              <div key={idx} className={`flex items-center gap-3 p-3 rounded-xl ${idx === 0 ? 'bg-warning/10' : 'bg-bg'}`}>
+                <span className="text-lg w-7 text-center shrink-0">{medal || `${idx + 1}`}</span>
+                <div className="w-8 h-8 rounded-full overflow-hidden shrink-0">
+                  {r.avatar_url ? (
+                    <img src={r.avatar_url} alt={r.nickname} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold">
+                      {r.nickname.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{r.nickname}</p>
+                  <p className="text-xs text-text-muted">{r.done}/{r.target}회</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={`text-sm font-bold ${r.rate >= 100 ? 'text-success' : r.rate >= 50 ? 'text-primary' : 'text-danger'}`}>{r.rate}%</p>
+                  {r.rate < 100 && <p className="text-[10px] text-danger">벌금</p>}
+                </div>
+              </div>
+            )
+          })}
+          <Button fullWidth onClick={() => setShowWeeklyResult(false)}>확인</Button>
         </div>
       </Modal>
     </>
