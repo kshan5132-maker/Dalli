@@ -66,6 +66,9 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   // Weekly verifications with day info for mission matrix
   const [weeklyVerifMatrix, setWeeklyVerifMatrix] = useState<{ user_id: string; routine_id: string; verified_at: string }[]>([])
 
+  // Mission detail toggle state
+  const [showMissionDetail, setShowMissionDetail] = useState(false)
+
   // Weekly results popup state
   const [showWeeklyResult, setShowWeeklyResult] = useState(false)
   const [weeklyResultData, setWeeklyResultData] = useState<{ nickname: string; avatar_url: string | null; rate: number; done: number; target: number }[]>([])
@@ -719,13 +722,43 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           const today = new Date()
           const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1
 
+          // 남은 일수 계산
+          const daysLeft = 6 - todayIdx
+          const isSunday = todayIdx === 6
+
+          // 달성률 순 정렬 (같으면 이름순)
+          const sortedStats = [...memberStats].sort((a, b) => {
+            if (b.rate !== a.rate) return b.rate - a.rate
+            return (a.profile.nickname || '').localeCompare(b.profile.nickname || '')
+          })
+
+          // 주간 목표
+          const sharedTarget = memberStats.length > 0 ? memberStats[0].weeklyTarget : 0
+
           return (
             <div className="space-y-3 pb-6">
+              {/* 상단 요약 카드 */}
               <Card className="bg-gradient-to-br from-warning/10 to-warning/5 border-warning/20">
-                <p className="text-sm font-bold text-warning mb-1">이번 주 미션 달성 현황</p>
-                <p className="text-xs text-text-secondary">
-                  주간 목표 미달성 시 벌금 {group.penalty_amount.toLocaleString()}원
-                </p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm font-bold text-warning">이번 주 미션 달성 현황</p>
+                  {isSunday ? (
+                    <span className="px-2 py-0.5 bg-danger/10 text-danger text-[10px] font-bold rounded-full animate-pulse">
+                      오늘이 마지막 날!
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-warning/10 text-warning text-[10px] font-bold rounded-full">
+                      남은 기간: {daysLeft}일
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-text-secondary">
+                    주간 목표: {sharedTarget}회 인증
+                  </p>
+                  <p className="text-xs text-text-secondary">
+                    미달성 시 벌금 <span className="text-danger font-semibold">{group.penalty_amount.toLocaleString()}원</span>
+                  </p>
+                </div>
               </Card>
 
               {groupRoutines.length === 0 ? (
@@ -734,44 +767,149 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                 </div>
               ) : (
                 <>
-                  {/* 루틴별 달성 매트릭스 */}
-                  {groupRoutines.map((routine) => (
-                    <Card key={routine.id}>
-                      <p className="text-sm font-bold mb-2">{routine.title}</p>
-                      {/* 요일 헤더 */}
-                      <div className="grid grid-cols-8 gap-1 text-center mb-1">
-                        <div className="text-[10px] text-text-muted"></div>
-                        {dayLabels.map((d, i) => (
-                          <div key={i} className={`text-[10px] font-medium ${i === todayIdx ? 'text-primary' : 'text-text-muted'}`}>{d}</div>
-                        ))}
-                      </div>
-                      {/* 멤버별 행 */}
-                      {members.map((member) => (
-                        <div key={member.user_id} className="grid grid-cols-8 gap-1 items-center mb-0.5">
-                          <p className="text-[10px] text-text-secondary truncate pr-1">{member.profiles?.nickname?.slice(0, 3) || '?'}</p>
-                          {weekDates.map((date, dayIdx) => {
-                            const dayStr = date.toDateString()
-                            const hasVerif = weeklyVerifMatrix.some(
-                              (v) => v.user_id === member.user_id && v.routine_id === routine.id && new Date(v.verified_at).toDateString() === dayStr
-                            )
-                            const isFuture = dayIdx > todayIdx
-                            return (
-                              <div key={dayIdx} className="flex items-center justify-center h-6">
-                                {isFuture ? (
-                                  <span className="text-[10px] text-text-muted/50">-</span>
-                                ) : hasVerif ? (
-                                  <span className="text-sm">✅</span>
-                                ) : (
-                                  <span className="text-sm">❌</span>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ))}
-                    </Card>
-                  ))}
+                  {/* 멤버 카드형 리스트 */}
+                  <div className="space-y-2">
+                    {sortedStats.map((stat, idx) => {
+                      const remaining = stat.weeklyTarget - stat.weeklyDone
+                      const isComplete = stat.rate >= 100
+                      const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null
+                      const isMe = stat.userId === user?.id
 
+                      // 프로그레스 바 색상
+                      const barColor = isComplete
+                        ? 'bg-[#10B981]'
+                        : stat.rate >= 50
+                          ? 'bg-[#F59E0B]'
+                          : stat.rate > 0
+                            ? 'bg-[#F97316]'
+                            : 'bg-[#EF4444]'
+
+                      // 상태 메시지
+                      let statusMsg: string
+                      let statusColor: string
+                      if (isComplete) {
+                        statusMsg = '완료! ✅'
+                        statusColor = 'text-[#10B981]'
+                      } else if (stat.rate >= 50) {
+                        statusMsg = `${remaining}회 남음`
+                        statusColor = 'text-[#F97316]'
+                      } else if (stat.weeklyDone > 0) {
+                        statusMsg = `${remaining}회 남음 🔴`
+                        statusColor = 'text-[#EF4444]'
+                      } else {
+                        statusMsg = '아직 시작 안 함 🔴'
+                        statusColor = 'text-[#EF4444]'
+                      }
+
+                      return (
+                        <Card key={stat.userId} className={isMe ? 'border-primary/30 bg-primary/5' : ''}>
+                          <div className="flex items-center gap-2.5 mb-2">
+                            {/* 순위 */}
+                            <span className="text-lg w-7 text-center shrink-0">
+                              {medal || `${idx + 1}`}
+                            </span>
+                            {/* 프로필 사진 */}
+                            <div className="w-9 h-9 rounded-full overflow-hidden shrink-0">
+                              {stat.profile.avatar_url ? (
+                                <img src={stat.profile.avatar_url} alt={stat.profile.nickname || ''} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold">
+                                  {stat.profile.nickname?.charAt(0) || '?'}
+                                </div>
+                              )}
+                            </div>
+                            {/* 닉네임 */}
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-semibold truncate ${isMe ? 'text-primary' : ''}`}>
+                                {stat.profile.nickname || '알 수 없음'}
+                                {isMe && <span className="text-xs font-normal text-primary/70 ml-1">(나)</span>}
+                              </p>
+                            </div>
+                            {/* 달성 횟수 */}
+                            <div className="text-right shrink-0">
+                              <p className={`text-sm font-bold ${isComplete ? 'text-[#10B981]' : ''}`}>
+                                {stat.weeklyDone}/{stat.weeklyTarget}
+                              </p>
+                            </div>
+                          </div>
+                          {/* 프로그레스 바 */}
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="flex-1 h-2.5 bg-bg rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-700 ${barColor}`}
+                                style={{ width: `${Math.min(stat.rate, 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-bold text-text-secondary w-10 text-right shrink-0">
+                              {stat.rate}%
+                            </span>
+                          </div>
+                          {/* 상태 메시지 */}
+                          <p className={`text-xs font-medium ${statusColor}`}>
+                            {statusMsg}
+                          </p>
+                        </Card>
+                      )
+                    })}
+                  </div>
+
+                  {/* 요일별 상세보기 토글 */}
+                  <button
+                    onClick={() => setShowMissionDetail(!showMissionDetail)}
+                    className="w-full py-2.5 text-sm font-medium text-text-secondary flex items-center justify-center gap-1.5 bg-bg rounded-xl hover:bg-bg-card transition-colors"
+                  >
+                    <span>{showMissionDetail ? '📊 요일별 상세 접기' : '📊 요일별 상세보기'}</span>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className={`w-4 h-4 transition-transform duration-200 ${showMissionDetail ? 'rotate-180' : ''}`}
+                    >
+                      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+
+                  {/* 접힌 요일별 상세 매트릭스 */}
+                  {showMissionDetail && (
+                    <div className="space-y-3">
+                      {groupRoutines.map((routine) => (
+                        <Card key={routine.id}>
+                          <p className="text-sm font-bold mb-2">{routine.title}</p>
+                          {/* 요일 헤더 */}
+                          <div className="grid grid-cols-8 gap-1 text-center mb-1">
+                            <div className="text-[10px] text-text-muted"></div>
+                            {dayLabels.map((d, i) => (
+                              <div key={i} className={`text-[10px] font-medium ${i === todayIdx ? 'text-primary' : 'text-text-muted'}`}>{d}</div>
+                            ))}
+                          </div>
+                          {/* 멤버별 행 */}
+                          {members.map((member) => (
+                            <div key={member.user_id} className="grid grid-cols-8 gap-1 items-center mb-0.5">
+                              <p className="text-[10px] text-text-secondary truncate pr-1">{member.profiles?.nickname?.slice(0, 3) || '?'}</p>
+                              {weekDates.map((date, dayIdx) => {
+                                const dayStr = date.toDateString()
+                                const hasVerif = weeklyVerifMatrix.some(
+                                  (v) => v.user_id === member.user_id && v.routine_id === routine.id && new Date(v.verified_at).toDateString() === dayStr
+                                )
+                                const isFuture = dayIdx > todayIdx
+                                return (
+                                  <div key={dayIdx} className="flex items-center justify-center h-6">
+                                    {isFuture ? (
+                                      <span className="text-[10px] text-text-muted/50">-</span>
+                                    ) : hasVerif ? (
+                                      <span className="text-sm">✅</span>
+                                    ) : (
+                                      <span className="text-sm">❌</span>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ))}
+                        </Card>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
             </div>
