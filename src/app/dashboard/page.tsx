@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -12,7 +12,7 @@ import ErrorRetry from '@/components/ErrorRetry'
 import Modal from '@/components/Modal'
 import Button from '@/components/Button'
 import { DashboardSkeleton } from '@/components/Skeleton'
-import { FREQUENCY_TARGETS, FREQUENCY_LABELS } from '@/lib/types'
+import { FREQUENCY_TARGETS, FREQUENCY_LABELS, EXERCISE_TYPE_LABELS } from '@/lib/types'
 import { getWeekRange, getMonthRange } from '@/lib/utils'
 import { isDevMode } from '@/lib/fetch'
 
@@ -37,6 +37,26 @@ type GroupSummary = {
   allMembers?: { userId: string; nickname: string; done: number; target: number; rate: number }[]
 }
 
+type MileageVerif = {
+  id: string
+  exercise_type: string | null
+  exercise_amount: string | null
+  memo: string | null
+  photo_url: string | null
+  verified_at: string
+  routines: { title: string } | null
+}
+
+const EXERCISE_ICONS: Record<string, string> = {
+  weight: '\uD83C\uDFCB\uFE0F',
+  running: '\uD83C\uDFC3',
+  swimming: '\uD83C\uDFCA',
+  cycling: '\uD83D\uDEB4',
+  hiking: '\uD83E\uDD7E',
+  yoga: '\uD83E\uDDD8',
+  etc: '\uD83D\uDCAA',
+}
+
 export default function DashboardPage() {
   const router = useRouter()
   const supabase = createClient()
@@ -47,10 +67,20 @@ export default function DashboardPage() {
   const [groupSummaries, setGroupSummaries] = useState<GroupSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState<'personal' | 'group'>('personal')
+  const [tab, setTab] = useState<'personal' | 'group' | 'mileage'>('personal')
   // 그룹 순위 팝업
   const [rankPopup, setRankPopup] = useState<GroupSummary | null>(null)
   const [rankMembers, setRankMembers] = useState<{ nickname: string; rate: number; userId: string; done: number; target: number }[]>([])
+
+  // 마일리지 탭 상태
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date())
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  })
+  const [mileageVerifs, setMileageVerifs] = useState<MileageVerif[]>([])
+  const [mileageLoading, setMileageLoading] = useState(false)
+  const prevMileageKey = useRef('')
 
   // useAuth()에서 인증 정보 가져오기
   useEffect(() => {
@@ -71,6 +101,16 @@ export default function DashboardPage() {
     }, 10000)
     return () => clearTimeout(timer)
   }, [loading])
+
+  // 마일리지 데이터 로드
+  useEffect(() => {
+    if (tab !== 'mileage' || !user) return
+    const key = `${calendarMonth.getFullYear()}-${calendarMonth.getMonth()}`
+    if (prevMileageKey.current === key) return
+    prevMileageKey.current = key
+    loadMileageData(user.id, calendarMonth.getFullYear(), calendarMonth.getMonth())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, calendarMonth, user?.id])
 
   const loadDashboard = async (uid: string) => {
     setError('')
@@ -318,7 +358,97 @@ export default function DashboardPage() {
     }
   }
 
-  const filteredStats = stats.filter((s) => s.routine.type === tab)
+  // === 마일리지 데이터 로드 ===
+  const loadMileageData = async (uid: string, year: number, month: number) => {
+    setMileageLoading(true)
+    try {
+      const start = new Date(year, month, 1)
+      const end = new Date(year, month + 1, 0, 23, 59, 59, 999)
+
+      const { data } = await supabase
+        .from('verifications')
+        .select('id, exercise_type, exercise_amount, memo, photo_url, verified_at, routines(title)')
+        .eq('user_id', uid)
+        .gte('verified_at', start.toISOString())
+        .lte('verified_at', end.toISOString())
+        .order('verified_at', { ascending: false })
+
+      setMileageVerifs((data || []) as unknown as MileageVerif[])
+    } catch (err) {
+      console.error('[Dalli] [Mileage] 로드 실패:', err)
+    } finally {
+      setMileageLoading(false)
+    }
+  }
+
+  // === 마일리지 헬퍼 ===
+  const handleMonthChange = (delta: number) => {
+    const newMonth = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + delta, 1)
+    setCalendarMonth(newMonth)
+    prevMileageKey.current = '' // 강제 리로드
+
+    const now = new Date()
+    if (newMonth.getFullYear() === now.getFullYear() && newMonth.getMonth() === now.getMonth()) {
+      setSelectedDate(new Date(now.getFullYear(), now.getMonth(), now.getDate()))
+    } else {
+      setSelectedDate(new Date(newMonth.getFullYear(), newMonth.getMonth(), 1))
+    }
+  }
+
+  const getSelectedWeekRange = () => {
+    const d = new Date(selectedDate)
+    const day = d.getDay()
+    const mon = new Date(d)
+    mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+    mon.setHours(0, 0, 0, 0)
+    const sun = new Date(mon)
+    sun.setDate(mon.getDate() + 6)
+    sun.setHours(23, 59, 59, 999)
+    return { start: mon, end: sun }
+  }
+
+  const getExerciseBreakdown = (verifs: MileageVerif[]) => {
+    const map: Record<string, { count: number; totalAmount: number }> = {}
+    verifs.forEach(v => {
+      if (!v.exercise_type) return
+      if (!map[v.exercise_type]) map[v.exercise_type] = { count: 0, totalAmount: 0 }
+      map[v.exercise_type].count++
+      if (v.exercise_amount) {
+        const parsed = parseFloat(v.exercise_amount)
+        if (!isNaN(parsed)) map[v.exercise_type].totalAmount += parsed
+      }
+    })
+    return Object.entries(map).map(([type, data]) => ({
+      type,
+      label: EXERCISE_TYPE_LABELS[type] || type,
+      icon: EXERCISE_ICONS[type] || '\uD83D\uDCAA',
+      ...data,
+    }))
+  }
+
+  const buildCalendarCells = () => {
+    const year = calendarMonth.getFullYear()
+    const month = calendarMonth.getMonth()
+    const firstDay = new Date(year, month, 1)
+    const lastDay = new Date(year, month + 1, 0)
+    const daysInMonth = lastDay.getDate()
+
+    // Monday = 0 패딩
+    let startPadding = firstDay.getDay() - 1
+    if (startPadding < 0) startPadding = 6
+
+    const cells: { day: number | null; date: Date | null }[] = []
+    for (let i = 0; i < startPadding; i++) {
+      cells.push({ day: null, date: null })
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      cells.push({ day: d, date: new Date(year, month, d) })
+    }
+    return cells
+  }
+
+  // === 기존 대시보드 계산 ===
+  const filteredStats = stats.filter((s) => s.routine.type === (tab === 'mileage' ? 'personal' : tab))
   const totalWeeklyDone = filteredStats.reduce((sum, s) => sum + s.weeklyDone, 0)
   const totalWeeklyTarget = filteredStats.reduce((sum, s) => sum + s.weeklyTarget, 0)
   const totalRate = totalWeeklyTarget > 0 ? Math.round((totalWeeklyDone / totalWeeklyTarget) * 100) : 0
@@ -327,6 +457,27 @@ export default function DashboardPage() {
   const weeklyData = tab === 'personal' ? personalWeeklyData : groupWeeklyData
   const dayLabels = ['월', '화', '수', '목', '금', '토', '일']
   const maxDailyCount = Math.max(...weeklyData, 1)
+
+  // === 마일리지 계산 ===
+  const verifiedDatesSet = new Set(mileageVerifs.map(v => new Date(v.verified_at).toDateString()))
+  const selectedWeek = getSelectedWeekRange()
+  const weeklyMileageVerifs = mileageVerifs.filter(v => {
+    const d = new Date(v.verified_at)
+    return d >= selectedWeek.start && d <= selectedWeek.end
+  })
+  const monthlyMileageVerifs = mileageVerifs
+  const dailyMileageVerifs = mileageVerifs.filter(v =>
+    new Date(v.verified_at).toDateString() === selectedDate.toDateString()
+  )
+  const weeklyBreakdown = getExerciseBreakdown(weeklyMileageVerifs)
+  const monthlyBreakdown = getExerciseBreakdown(monthlyMileageVerifs)
+  const calendarCells = buildCalendarCells()
+  const todayStr = new Date().toDateString()
+  const selectedStr = selectedDate.toDateString()
+
+  // 주간 라벨
+  const weekStartLabel = `${selectedWeek.start.getMonth() + 1}/${selectedWeek.start.getDate()}`
+  const weekEndLabel = `${selectedWeek.end.getMonth() + 1}/${selectedWeek.end.getDate()}`
 
   if (loading) {
     return (
@@ -363,7 +514,7 @@ export default function DashboardPage() {
       <Header title="대시보드" />
 
       <div className="px-4 pt-4 space-y-4">
-        {/* Personal/Group tabs */}
+        {/* Personal/Group/Mileage tabs */}
         <div className="flex gap-1 bg-bg rounded-xl p-1">
           <button
             onClick={() => setTab('personal')}
@@ -377,150 +528,319 @@ export default function DashboardPage() {
           >
             그룹
           </button>
+          <button
+            onClick={() => setTab('mileage')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${tab === 'mileage' ? 'bg-bg-card text-text shadow-sm' : 'text-text-muted'}`}
+          >
+            마일리지
+          </button>
         </div>
 
-        {/* Weekly summary */}
-        <div className="grid grid-cols-3 gap-3">
-          <Card className="text-center py-4">
-            <p className="text-2xl font-extrabold text-primary">{totalRate}%</p>
-            <p className="text-[10px] text-text-muted mt-1">이번 주 달성률</p>
-          </Card>
-          <Card className="text-center py-4">
-            <p className="text-2xl font-extrabold text-secondary">{totalWeeklyDone}</p>
-            <p className="text-[10px] text-text-muted mt-1">이번 주 인증</p>
-          </Card>
-          <Card className="text-center py-4">
-            <p className="text-2xl font-extrabold text-warning">{maxStreak}</p>
-            <p className="text-[10px] text-text-muted mt-1">최대 스트릭</p>
-          </Card>
-        </div>
+        {/* ========== 마일리지 탭 ========== */}
+        {tab === 'mileage' && (
+          <div className="space-y-4">
+            {/* 월 네비게이션 */}
+            <div className="flex items-center justify-between">
+              <button onClick={() => handleMonthChange(-1)} className="p-2 rounded-lg hover:bg-bg active:bg-bg">
+                <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" /></svg>
+              </button>
+              <h3 className="text-base font-bold">
+                {calendarMonth.getFullYear()}년 {calendarMonth.getMonth() + 1}월
+              </h3>
+              <button onClick={() => handleMonthChange(1)} className="p-2 rounded-lg hover:bg-bg active:bg-bg">
+                <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
+              </button>
+            </div>
 
-        {/* Weekly chart */}
-        <Card>
-          <h3 className="text-sm font-bold mb-4">이번 주 인증 현황</h3>
-          <div className="flex items-end justify-between gap-2 h-32">
-            {weeklyData.map((count, idx) => {
-              const height = (count / maxDailyCount) * 100
-              const today = new Date()
-              const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1
-              const isToday = idx === todayIdx
-              return (
-                <div key={idx} className="flex-1 flex flex-col items-center gap-1">
-                  <span className="text-[10px] font-semibold text-text-secondary">{count > 0 ? count : ''}</span>
-                  <div className="w-full flex items-end h-20">
-                    <div
-                      className={`w-full rounded-t-md transition-all duration-500 ${isToday ? 'bg-primary' : count > 0 ? 'bg-primary/30' : 'bg-border/50'}`}
-                      style={{ height: `${Math.max(height, 8)}%` }}
-                    />
+            {/* 캘린더 */}
+            <Card>
+              {mileageLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-7 gap-1 text-center">
+                  {/* 요일 헤더 */}
+                  {dayLabels.map(d => (
+                    <div key={d} className="text-[10px] font-medium text-text-muted py-1">{d}</div>
+                  ))}
+                  {/* 날짜 셀 */}
+                  {calendarCells.map((cell, i) => {
+                    if (!cell.day || !cell.date) {
+                      return <div key={`empty-${i}`} />
+                    }
+                    const dateStr = cell.date.toDateString()
+                    const isSelected = dateStr === selectedStr
+                    const isToday = dateStr === todayStr
+                    const hasVerif = verifiedDatesSet.has(dateStr)
+                    // 선택된 주 범위에 속하는지
+                    const inSelectedWeek = cell.date >= selectedWeek.start && cell.date <= selectedWeek.end
+
+                    return (
+                      <button
+                        key={`day-${cell.day}`}
+                        onClick={() => setSelectedDate(new Date(cell.date!))}
+                        className={`relative flex flex-col items-center justify-center py-1.5 rounded-lg transition-all text-xs
+                          ${isSelected ? 'bg-primary text-white font-bold' : ''}
+                          ${!isSelected && inSelectedWeek ? 'bg-primary/10' : ''}
+                          ${!isSelected && isToday ? 'font-bold text-primary' : ''}
+                          ${!isSelected && !isToday && !inSelectedWeek ? 'text-text-secondary' : ''}
+                        `}
+                      >
+                        {cell.day}
+                        {hasVerif && (
+                          <span className={`absolute bottom-0.5 w-1 h-1 rounded-full ${isSelected ? 'bg-white' : 'bg-success'}`} />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+
+            {/* 주간/월간 마일리지 요약 */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* 주간 */}
+              <Card>
+                <p className="text-[10px] text-text-muted mb-1">{weekStartLabel} ~ {weekEndLabel} 주간</p>
+                <p className="text-xl font-extrabold text-primary">{weeklyMileageVerifs.length}<span className="text-sm font-medium text-text-muted ml-0.5">회</span></p>
+                {weeklyBreakdown.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {weeklyBreakdown.map(b => (
+                      <div key={b.type} className="flex items-center justify-between text-[10px]">
+                        <span className="text-text-secondary">{b.icon} {b.label}</span>
+                        <span className="font-semibold">
+                          {b.count}회
+                          {b.totalAmount > 0 && <span className="text-text-muted ml-1">{b.totalAmount}{b.type === 'running' || b.type === 'cycling' || b.type === 'swimming' ? 'km' : b.type === 'weight' ? 'min' : ''}</span>}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                  <span className={`text-[10px] font-medium ${isToday ? 'text-primary' : 'text-text-muted'}`}>{dayLabels[idx]}</span>
-                </div>
-              )
-            })}
-          </div>
-        </Card>
+                )}
+                {weeklyBreakdown.length === 0 && !mileageLoading && (
+                  <p className="text-[10px] text-text-muted mt-1">기록 없음</p>
+                )}
+              </Card>
+              {/* 월간 */}
+              <Card>
+                <p className="text-[10px] text-text-muted mb-1">{calendarMonth.getMonth() + 1}월 월간</p>
+                <p className="text-xl font-extrabold text-secondary">{monthlyMileageVerifs.length}<span className="text-sm font-medium text-text-muted ml-0.5">회</span></p>
+                {monthlyBreakdown.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {monthlyBreakdown.map(b => (
+                      <div key={b.type} className="flex items-center justify-between text-[10px]">
+                        <span className="text-text-secondary">{b.icon} {b.label}</span>
+                        <span className="font-semibold">
+                          {b.count}회
+                          {b.totalAmount > 0 && <span className="text-text-muted ml-1">{b.totalAmount}{b.type === 'running' || b.type === 'cycling' || b.type === 'swimming' ? 'km' : b.type === 'weight' ? 'min' : ''}</span>}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {monthlyBreakdown.length === 0 && !mileageLoading && (
+                  <p className="text-[10px] text-text-muted mt-1">기록 없음</p>
+                )}
+              </Card>
+            </div>
 
-        {/* Group tab: group-level stats with rankings */}
-        {tab === 'group' && groupSummaries.length > 0 && (
-          <div>
-            <h3 className="text-sm font-bold mb-3">그룹별 내 순위</h3>
-            <div className="space-y-3">
-              {groupSummaries.map((gs) => (
-                <div key={gs.groupId} onClick={() => { setRankPopup(gs); setRankMembers(gs.allMembers || []) }} className="cursor-pointer">
-                  <Card hover className="mb-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary-dark rounded-lg flex items-center justify-center text-white text-xs font-bold">
-                          {gs.groupName.charAt(0)}
+            {/* 선택된 날짜 인증 상세 */}
+            <div>
+              <h3 className="text-sm font-bold mb-3">
+                {selectedDate.getMonth() + 1}월 {selectedDate.getDate()}일 ({['일', '월', '화', '수', '목', '금', '토'][selectedDate.getDay()]})
+                {dailyMileageVerifs.length > 0 && (
+                  <span className="text-text-muted font-normal ml-2">{dailyMileageVerifs.length}건</span>
+                )}
+              </h3>
+              {dailyMileageVerifs.length === 0 ? (
+                <Card className="text-center py-6">
+                  <p className="text-sm text-text-muted">이 날은 인증 기록이 없어요</p>
+                </Card>
+              ) : (
+                <div className="space-y-2">
+                  {dailyMileageVerifs.map(v => {
+                    const time = new Date(v.verified_at)
+                    const hh = time.getHours().toString().padStart(2, '0')
+                    const mm = time.getMinutes().toString().padStart(2, '0')
+                    const icon = v.exercise_type ? (EXERCISE_ICONS[v.exercise_type] || '\uD83D\uDCAA') : '\u2705'
+                    const typeLabel = v.exercise_type ? (EXERCISE_TYPE_LABELS[v.exercise_type] || v.exercise_type) : '체크 인증'
+
+                    return (
+                      <Card key={v.id}>
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-2 flex-1 min-w-0">
+                            <span className="text-lg shrink-0">{icon}</span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold">
+                                {typeLabel}
+                                {v.exercise_amount && <span className="text-text-muted font-normal ml-1.5">{v.exercise_amount}</span>}
+                              </p>
+                              {v.routines?.title && (
+                                <p className="text-xs text-text-muted truncate">{v.routines.title}</p>
+                              )}
+                              {v.memo && (
+                                <p className="text-xs text-text-secondary mt-0.5">{v.memo}</p>
+                              )}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-text-muted shrink-0 ml-2">{hh}:{mm}</span>
                         </div>
-                        <div>
-                          <p className="text-sm font-bold">{gs.groupName}</p>
-                          <p className="text-[10px] text-text-muted">{gs.totalMembers}명 참여</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-lg font-extrabold ${gs.myRank <= 1 ? 'text-warning' : gs.myRank <= 3 ? 'text-primary' : 'text-text-secondary'}`}>
-                          {gs.myRank}위
-                        </p>
-                        <p className="text-[10px] text-text-muted">{gs.totalMembers}명 중</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-2 bg-bg rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${gs.myRate >= 100 ? 'bg-success' : 'bg-primary'}`}
-                          style={{ width: `${Math.min(gs.myRate, 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-xs font-semibold text-text-secondary shrink-0">
-                        {gs.myRate}%
-                      </span>
-                    </div>
-                    {gs.topMember && (
-                      <p className="text-[10px] text-text-muted mt-2">
-                        1위: {gs.topMember.nickname} ({gs.topMember.rate}%)
-                      </p>
-                    )}
-                  </Card>
+                      </Card>
+                    )
+                  })}
                 </div>
-              ))}
+              )}
             </div>
           </div>
         )}
 
-        {/* Per-routine progress bars */}
-        <div>
-          <h3 className="text-sm font-bold mb-3">{tab === 'personal' ? '개인' : '그룹'} 루틴별 달성률</h3>
-          {filteredStats.length === 0 ? (
-            <Card className="text-center py-6">
-              <p className="text-sm text-text-muted">{tab === 'personal' ? '등록된 개인 루틴이 없어요' : '참여 중인 그룹 루틴이 없어요'}</p>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {filteredStats.map((stat) => {
-                const weeklyRate = stat.weeklyTarget > 0 ? Math.min(Math.round((stat.weeklyDone / stat.weeklyTarget) * 100), 100) : 0
-                const monthlyRate = stat.monthlyTarget > 0 ? Math.min(Math.round((stat.monthlyDone / stat.monthlyTarget) * 100), 100) : 0
-                return (
-                  <Link key={stat.routine.id} href={`/routine/${stat.routine.id}`}>
-                    <Card hover>
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <h4 className="text-sm font-bold">{stat.routine.title}</h4>
-                          <p className="text-xs text-text-muted">
-                            {FREQUENCY_LABELS[stat.routine.frequency]}
-                            {stat.streak > 0 && <span className="text-warning ml-2">{stat.streak}일 연속</span>}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <div>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="text-text-secondary">이번 주</span>
-                            <span className="font-semibold">{stat.weeklyDone}/{stat.weeklyTarget} ({weeklyRate}%)</span>
-                          </div>
-                          <div className="h-2 bg-bg rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${weeklyRate >= 100 ? 'bg-success' : 'bg-primary'}`} style={{ width: `${weeklyRate}%` }} />
-                          </div>
-                        </div>
-                        {tab === 'personal' && (
-                        <div>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="text-text-secondary">이번 달</span>
-                            <span className="font-semibold">{stat.monthlyDone}/{stat.monthlyTarget} ({monthlyRate}%)</span>
-                          </div>
-                          <div className="h-2 bg-bg rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${monthlyRate >= 100 ? 'bg-success' : 'bg-secondary'}`} style={{ width: `${monthlyRate}%` }} />
-                          </div>
-                        </div>
-                        )}
-                      </div>
-                    </Card>
-                  </Link>
-                )
-              })}
+        {/* ========== 개인/그룹 탭 (기존) ========== */}
+        {tab !== 'mileage' && (
+          <>
+            {/* Weekly summary */}
+            <div className="grid grid-cols-3 gap-3">
+              <Card className="text-center py-4">
+                <p className="text-2xl font-extrabold text-primary">{totalRate}%</p>
+                <p className="text-[10px] text-text-muted mt-1">이번 주 달성률</p>
+              </Card>
+              <Card className="text-center py-4">
+                <p className="text-2xl font-extrabold text-secondary">{totalWeeklyDone}</p>
+                <p className="text-[10px] text-text-muted mt-1">이번 주 인증</p>
+              </Card>
+              <Card className="text-center py-4">
+                <p className="text-2xl font-extrabold text-warning">{maxStreak}</p>
+                <p className="text-[10px] text-text-muted mt-1">최대 스트릭</p>
+              </Card>
             </div>
-          )}
-        </div>
+
+            {/* Weekly chart */}
+            <Card>
+              <h3 className="text-sm font-bold mb-4">이번 주 인증 현황</h3>
+              <div className="flex items-end justify-between gap-2 h-32">
+                {weeklyData.map((count, idx) => {
+                  const height = (count / maxDailyCount) * 100
+                  const today = new Date()
+                  const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1
+                  const isToday = idx === todayIdx
+                  return (
+                    <div key={idx} className="flex-1 flex flex-col items-center gap-1">
+                      <span className="text-[10px] font-semibold text-text-secondary">{count > 0 ? count : ''}</span>
+                      <div className="w-full flex items-end h-20">
+                        <div
+                          className={`w-full rounded-t-md transition-all duration-500 ${isToday ? 'bg-primary' : count > 0 ? 'bg-primary/30' : 'bg-border/50'}`}
+                          style={{ height: `${Math.max(height, 8)}%` }}
+                        />
+                      </div>
+                      <span className={`text-[10px] font-medium ${isToday ? 'text-primary' : 'text-text-muted'}`}>{dayLabels[idx]}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+
+            {/* Group tab: group-level stats with rankings */}
+            {tab === 'group' && groupSummaries.length > 0 && (
+              <div>
+                <h3 className="text-sm font-bold mb-3">그룹별 내 순위</h3>
+                <div className="space-y-3">
+                  {groupSummaries.map((gs) => (
+                    <div key={gs.groupId} onClick={() => { setRankPopup(gs); setRankMembers(gs.allMembers || []) }} className="cursor-pointer">
+                      <Card hover className="mb-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 bg-gradient-to-br from-primary to-primary-dark rounded-lg flex items-center justify-center text-white text-xs font-bold">
+                              {gs.groupName.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold">{gs.groupName}</p>
+                              <p className="text-[10px] text-text-muted">{gs.totalMembers}명 참여</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className={`text-lg font-extrabold ${gs.myRank <= 1 ? 'text-warning' : gs.myRank <= 3 ? 'text-primary' : 'text-text-secondary'}`}>
+                              {gs.myRank}위
+                            </p>
+                            <p className="text-[10px] text-text-muted">{gs.totalMembers}명 중</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 h-2 bg-bg rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${gs.myRate >= 100 ? 'bg-success' : 'bg-primary'}`}
+                              style={{ width: `${Math.min(gs.myRate, 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-semibold text-text-secondary shrink-0">
+                            {gs.myRate}%
+                          </span>
+                        </div>
+                        {gs.topMember && (
+                          <p className="text-[10px] text-text-muted mt-2">
+                            1위: {gs.topMember.nickname} ({gs.topMember.rate}%)
+                          </p>
+                        )}
+                      </Card>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Per-routine progress bars */}
+            <div>
+              <h3 className="text-sm font-bold mb-3">{tab === 'personal' ? '개인' : '그룹'} 루틴별 달성률</h3>
+              {filteredStats.length === 0 ? (
+                <Card className="text-center py-6">
+                  <p className="text-sm text-text-muted">{tab === 'personal' ? '등록된 개인 루틴이 없어요' : '참여 중인 그룹 루틴이 없어요'}</p>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {filteredStats.map((stat) => {
+                    const weeklyRate = stat.weeklyTarget > 0 ? Math.min(Math.round((stat.weeklyDone / stat.weeklyTarget) * 100), 100) : 0
+                    const monthlyRate = stat.monthlyTarget > 0 ? Math.min(Math.round((stat.monthlyDone / stat.monthlyTarget) * 100), 100) : 0
+                    return (
+                      <Link key={stat.routine.id} href={`/routine/${stat.routine.id}`}>
+                        <Card hover>
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <h4 className="text-sm font-bold">{stat.routine.title}</h4>
+                              <p className="text-xs text-text-muted">
+                                {FREQUENCY_LABELS[stat.routine.frequency]}
+                                {stat.streak > 0 && <span className="text-warning ml-2">{stat.streak}일 연속</span>}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span className="text-text-secondary">이번 주</span>
+                                <span className="font-semibold">{stat.weeklyDone}/{stat.weeklyTarget} ({weeklyRate}%)</span>
+                              </div>
+                              <div className="h-2 bg-bg rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full transition-all duration-500 ${weeklyRate >= 100 ? 'bg-success' : 'bg-primary'}`} style={{ width: `${weeklyRate}%` }} />
+                              </div>
+                            </div>
+                            {tab === 'personal' && (
+                            <div>
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span className="text-text-secondary">이번 달</span>
+                                <span className="font-semibold">{stat.monthlyDone}/{stat.monthlyTarget} ({monthlyRate}%)</span>
+                              </div>
+                              <div className="h-2 bg-bg rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full transition-all duration-500 ${monthlyRate >= 100 ? 'bg-success' : 'bg-secondary'}`} style={{ width: `${monthlyRate}%` }} />
+                              </div>
+                            </div>
+                            )}
+                          </div>
+                        </Card>
+                      </Link>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* 그룹 순위 팝업 */}
