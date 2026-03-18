@@ -11,7 +11,7 @@ import Card from '@/components/Card'
 import ErrorRetry from '@/components/ErrorRetry'
 import { VerifySkeleton } from '@/components/Skeleton'
 import type { Routine } from '@/lib/types'
-import { FREQUENCY_LABELS, FREQUENCY_TARGETS, VERIFICATION_TYPE_LABELS } from '@/lib/types'
+import { FREQUENCY_LABELS, FREQUENCY_TARGETS, VERIFICATION_TYPE_LABELS, EXERCISE_TYPES } from '@/lib/types'
 import { getWeekRange } from '@/lib/utils'
 
 type TabType = 'personal' | 'group'
@@ -36,6 +36,8 @@ export default function VerifyPage() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [memo, setMemo] = useState('')
+  const [exerciseType, setExerciseType] = useState('')
+  const [exerciseAmount, setExerciseAmount] = useState('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -295,6 +297,8 @@ export default function VerifyPage() {
         group_id: selectedRoutine.group_id,
         photo_url: photoUrl,
         memo: memo.trim() || null,
+        exercise_type: exerciseType || null,
+        exercise_amount: exerciseAmount.trim() || null,
       })
 
       if (verifyError) {
@@ -342,6 +346,8 @@ export default function VerifyPage() {
     setPhoto(null)
     setPhotoPreview(null)
     setMemo('')
+    setExerciseType('')
+    setExerciseAmount('')
     setStreak(0)
     if (user) loadData(user.id)
   }
@@ -605,6 +611,8 @@ export default function VerifyPage() {
               setPhoto(null)
               setPhotoPreview(null)
               setMemo('')
+              setExerciseType('')
+              setExerciseAmount('')
             }}
             className="text-sm text-text-secondary"
           >
@@ -783,13 +791,41 @@ export default function VerifyPage() {
           </Card>
         )}
 
+        {/* Exercise type & amount */}
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-text mb-1.5">운동 종류</label>
+            <select
+              value={exerciseType}
+              onChange={(e) => setExerciseType(e.target.value)}
+              className="w-full px-4 py-3 bg-bg border border-border rounded-xl text-sm text-text focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors appearance-none"
+            >
+              {EXERCISE_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          {exerciseType && (
+            <div>
+              <label className="block text-sm font-medium text-text mb-1.5">운동량 (선택사항)</label>
+              <input
+                type="text"
+                value={exerciseAmount}
+                onChange={(e) => setExerciseAmount(e.target.value)}
+                placeholder="예: 30분, 5km, 3세트"
+                className="w-full px-4 py-3 bg-bg border border-border rounded-xl text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
+              />
+            </div>
+          )}
+        </div>
+
         {/* Memo text field */}
         <div>
           <textarea
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
-            placeholder="오늘 어떤 운동을 했나요? (선택사항)"
-            rows={3}
+            placeholder="메모 (선택사항)"
+            rows={2}
             className="w-full px-4 py-3 bg-bg border border-border rounded-xl text-sm text-text placeholder:text-text-muted resize-none focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
           />
         </div>

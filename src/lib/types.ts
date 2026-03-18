@@ -50,9 +50,19 @@ export type Verification = {
   group_id: string | null
   photo_url: string | null
   memo: string | null
+  exercise_type: string | null
+  exercise_amount: string | null
   verified_at: string
   profiles?: Profile
   routines?: Routine
+}
+
+export type VerificationReaction = {
+  id: string
+  verification_id: string
+  user_id: string
+  type: 'like' | 'dislike'
+  created_at: string
 }
 
 export type Message = {
@@ -83,4 +93,25 @@ export const FREQUENCY_TARGETS: Record<RoutineFrequency, number> = {
 export const VERIFICATION_TYPE_LABELS: Record<VerificationType, string> = {
   photo: '사진 인증',
   check: '체크 인증',
+}
+
+export const EXERCISE_TYPES = [
+  { value: '', label: '선택 안 함' },
+  { value: 'weight', label: '웨이트' },
+  { value: 'running', label: '런닝' },
+  { value: 'swimming', label: '수영' },
+  { value: 'cycling', label: '자전거' },
+  { value: 'hiking', label: '등산' },
+  { value: 'yoga', label: '요가' },
+  { value: 'etc', label: '기타' },
+] as const
+
+export const EXERCISE_TYPE_LABELS: Record<string, string> = {
+  weight: '웨이트',
+  running: '런닝',
+  swimming: '수영',
+  cycling: '자전거',
+  hiking: '등산',
+  yoga: '요가',
+  etc: '기타',
 }

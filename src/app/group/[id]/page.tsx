@@ -12,9 +12,9 @@ import Modal from '@/components/Modal'
 import ErrorRetry from '@/components/ErrorRetry'
 import { GroupDetailSkeleton } from '@/components/Skeleton'
 import Input from '@/components/Input'
-import type { Group, GroupMember, Routine, Verification, Message, Profile } from '@/lib/types'
-import { FREQUENCY_TARGETS } from '@/lib/types'
-import { getWeekRange, formatDate } from '@/lib/utils'
+import type { Group, GroupMember, Routine, Verification, Message, Profile, VerificationReaction } from '@/lib/types'
+import { FREQUENCY_TARGETS, EXERCISE_TYPE_LABELS } from '@/lib/types'
+import { getWeekRange, getWeekRangeOffset, formatDate } from '@/lib/utils'
 
 type TabType = 'feed' | 'members' | 'mission' | 'chat'
 
@@ -73,6 +73,21 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const [showWeeklyResult, setShowWeeklyResult] = useState(false)
   const [weeklyResultData, setWeeklyResultData] = useState<{ nickname: string; avatar_url: string | null; rate: number; done: number; target: number }[]>([])
 
+  // Like/dislike reactions state
+  const [reactions, setReactions] = useState<Record<string, VerificationReaction[]>>({})
+  const [reactingId, setReactingId] = useState<string | null>(null)
+
+  // Week navigation offset (0 = this week, -1 = last week, etc.)
+  const [weekOffset, setWeekOffset] = useState(0)
+
+  // Member detail modal state
+  const [selectedMember, setSelectedMember] = useState<MemberStats | null>(null)
+  const [memberVerifHistory, setMemberVerifHistory] = useState<(Verification & { routines?: Routine })[]>([])
+  const [loadingMemberDetail, setLoadingMemberDetail] = useState(false)
+
+  // Cumulative penalty state
+  const [cumulativePenalties, setCumulativePenalties] = useState<Record<string, number>>({})
+
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const chatBottomRef = useRef<HTMLDivElement>(null)
 
@@ -125,6 +140,23 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
       if (verifications) {
         setFeed(verifications as unknown as (Verification & { profiles: Profile; routines: Routine })[])
+
+        // Load reactions for feed items
+        const verifIds = verifications.map((v: { id: string }) => v.id)
+        if (verifIds.length > 0) {
+          const { data: reactionData } = await supabase
+            .from('verification_reactions')
+            .select('*')
+            .in('verification_id', verifIds)
+          if (reactionData) {
+            const grouped: Record<string, VerificationReaction[]> = {}
+            reactionData.forEach((r: VerificationReaction) => {
+              if (!grouped[r.verification_id]) grouped[r.verification_id] = []
+              grouped[r.verification_id].push(r)
+            })
+            setReactions(grouped)
+          }
+        }
       }
 
       // Compute weekly member stats
@@ -180,6 +212,32 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
       stats.sort((a, b) => b.rate - a.rate)
       setMemberStats(stats)
+
+      // 누적 벌금 계산 (과거 4주간)
+      try {
+        const penalties: Record<string, number> = {}
+        for (let w = -1; w >= -4; w--) {
+          const { start: ws, end: we } = getWeekRangeOffset(w)
+          // 그룹 생성 이전의 주는 건너뜀
+          if (new Date(groupData.created_at) > we) continue
+          const { data: pastVerifs } = await supabase
+            .from('verifications')
+            .select('user_id, verified_at')
+            .eq('group_id', id)
+            .gte('verified_at', ws.toISOString())
+            .lte('verified_at', we.toISOString())
+          memberList.forEach((m) => {
+            const mVerifs = (pastVerifs || []).filter((v) => v.user_id === m.user_id)
+            const uniqueDays = new Set(mVerifs.map(v => new Date(v.verified_at).toDateString()))
+            if (uniqueDays.size < sharedWeeklyTarget && sharedWeeklyTarget > 0) {
+              penalties[m.user_id] = (penalties[m.user_id] || 0) + groupData.penalty_amount
+            }
+          })
+        }
+        setCumulativePenalties(penalties)
+      } catch (penaltyErr) {
+        console.error('[Dalli] [GroupDetail] 누적 벌금 계산 실패:', penaltyErr)
+      }
     } catch (err) {
       console.error('[Dalli] [GroupDetail] 데이터 로드 실패:', err)
       setError('그룹 데이터를 불러오는데 실패했습니다.')
@@ -187,6 +245,53 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
       setLoading(false)
     }
   }
+
+  // -- Reload mission data when week offset changes (past weeks only) --
+  const prevWeekOffset = useRef(0)
+  useEffect(() => {
+    if (prevWeekOffset.current === weekOffset) return
+    prevWeekOffset.current = weekOffset
+    if (!user || !group || members.length === 0) return
+
+    if (weekOffset === 0) {
+      // Return to current week — reload full data
+      loadGroupData(user.id)
+      return
+    }
+    const loadWeekData = async () => {
+      try {
+        const { start, end } = getWeekRangeOffset(weekOffset)
+        const { data: weekVerifs } = await supabase
+          .from('verifications')
+          .select('user_id, routine_id, verified_at')
+          .eq('group_id', id)
+          .gte('verified_at', start.toISOString())
+          .lte('verified_at', end.toISOString())
+
+        setWeeklyVerifMatrix((weekVerifs || []) as { user_id: string; routine_id: string; verified_at: string }[])
+
+        const sharedWeeklyTarget = groupRoutines.reduce(
+          (sum, r) => sum + (FREQUENCY_TARGETS[r.frequency as keyof typeof FREQUENCY_TARGETS] || 0),
+          0
+        )
+
+        const stats: MemberStats[] = members.map((member) => {
+          const profile = member.profiles!
+          const memberVerifs = (weekVerifs || []).filter((v) => v.user_id === member.user_id)
+          const uniqueDays = new Set(memberVerifs.map(v => new Date(v.verified_at).toDateString()))
+          const weeklyDone = uniqueDays.size
+          const rate = sharedWeeklyTarget > 0 ? Math.round((weeklyDone / sharedWeeklyTarget) * 100) : 0
+          return { profile, userId: member.user_id, weeklyDone, weeklyTarget: sharedWeeklyTarget, rate, penalty: sharedWeeklyTarget > 0 && rate < 100 }
+        })
+        stats.sort((a, b) => b.rate - a.rate)
+        setMemberStats(stats)
+      } catch (err) {
+        console.error('[Dalli] [GroupDetail] 주간 데이터 로드 실패:', err)
+      }
+    }
+    loadWeekData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekOffset])
 
   // -- Load chat messages --
   const loadMessages = useCallback(async () => {
@@ -420,6 +525,71 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     }
   }
 
+  // -- Handle like/dislike reaction --
+  const handleReaction = async (verificationId: string, type: 'like' | 'dislike') => {
+    if (!user || reactingId) return
+    setReactingId(verificationId)
+    try {
+      const existing = (reactions[verificationId] || []).find((r) => r.user_id === user.id)
+      if (existing) {
+        if (existing.type === type) {
+          // Remove reaction (toggle off)
+          await supabase.from('verification_reactions').delete().eq('id', existing.id)
+          setReactions((prev) => ({
+            ...prev,
+            [verificationId]: (prev[verificationId] || []).filter((r) => r.id !== existing.id),
+          }))
+        } else {
+          // Change reaction type
+          await supabase.from('verification_reactions').update({ type }).eq('id', existing.id)
+          setReactions((prev) => ({
+            ...prev,
+            [verificationId]: (prev[verificationId] || []).map((r) =>
+              r.id === existing.id ? { ...r, type } : r
+            ),
+          }))
+        }
+      } else {
+        // Insert new reaction
+        const { data: newReaction } = await supabase
+          .from('verification_reactions')
+          .insert({ verification_id: verificationId, user_id: user.id, type })
+          .select()
+          .single()
+        if (newReaction) {
+          setReactions((prev) => ({
+            ...prev,
+            [verificationId]: [...(prev[verificationId] || []), newReaction as VerificationReaction],
+          }))
+        }
+      }
+    } catch (err) {
+      console.error('[Dalli] [GroupDetail] 리액션 실패:', err)
+    } finally {
+      setReactingId(null)
+    }
+  }
+
+  // -- Load member detail (verification history) --
+  const handleMemberDetail = async (stat: MemberStats) => {
+    setSelectedMember(stat)
+    setLoadingMemberDetail(true)
+    try {
+      const { data: verifs } = await supabase
+        .from('verifications')
+        .select('*, routines(*)')
+        .eq('user_id', stat.userId)
+        .eq('group_id', id)
+        .order('verified_at', { ascending: false })
+        .limit(30)
+      setMemberVerifHistory((verifs || []) as (Verification & { routines?: Routine })[])
+    } catch (err) {
+      console.error('[Dalli] [GroupDetail] 멤버 상세 로드 실패:', err)
+    } finally {
+      setLoadingMemberDetail(false)
+    }
+  }
+
   const isToday = (dateStr: string) => {
     return new Date(dateStr).toDateString() === new Date().toDateString()
   }
@@ -639,6 +809,12 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                             {v.routines?.title || '루틴'}
                           </span>
                           을 인증했습니다
+                          {v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type] && (
+                            <span className="ml-1 text-secondary">
+                              · {EXERCISE_TYPE_LABELS[v.exercise_type]}
+                              {v.exercise_amount && ` ${v.exercise_amount}`}
+                            </span>
+                          )}
                         </p>
                         {v.memo && (
                           <p className="text-sm text-text mt-2">{v.memo}</p>
@@ -652,6 +828,46 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                             />
                           </div>
                         )}
+                        {/* Like / Dislike buttons */}
+                        {(() => {
+                          const vReactions = reactions[v.id] || []
+                          const likes = vReactions.filter((r) => r.type === 'like').length
+                          const dislikes = vReactions.filter((r) => r.type === 'dislike').length
+                          const myReaction = vReactions.find((r) => r.user_id === user?.id)
+                          const totalMembers = members.length
+                          const isInvalid = totalMembers > 1 && dislikes > totalMembers / 2
+                          return (
+                            <div className="flex items-center gap-3 mt-2 pt-2 border-t border-border/50">
+                              <button
+                                onClick={() => handleReaction(v.id, 'like')}
+                                disabled={reactingId === v.id}
+                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors ${
+                                  myReaction?.type === 'like'
+                                    ? 'bg-primary/10 text-primary font-semibold'
+                                    : 'text-text-muted hover:bg-bg'
+                                }`}
+                              >
+                                👍 {likes > 0 && likes}
+                              </button>
+                              <button
+                                onClick={() => handleReaction(v.id, 'dislike')}
+                                disabled={reactingId === v.id}
+                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors ${
+                                  myReaction?.type === 'dislike'
+                                    ? 'bg-danger/10 text-danger font-semibold'
+                                    : 'text-text-muted hover:bg-bg'
+                                }`}
+                              >
+                                👎 {dislikes > 0 && dislikes}
+                              </button>
+                              {isInvalid && (
+                                <span className="text-[10px] text-danger font-bold ml-auto">
+                                  ⚠️ 과반수 이의 — 인증 무효
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })()}
                       </div>
                     </div>
                   </Card>
@@ -711,7 +927,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
 
         {/* ====== Mission Status Tab ====== */}
         {activeTab === 'mission' && (() => {
-          const { start: weekStart } = getWeekRange()
+          const { start: weekStart } = getWeekRangeOffset(weekOffset)
           const dayLabels = ['월', '화', '수', '목', '금', '토', '일']
           // 요일별 날짜 계산
           const weekDates = dayLabels.map((_, idx) => {
@@ -725,6 +941,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           // 남은 일수 계산
           const daysLeft = 6 - todayIdx
           const isSunday = todayIdx === 6
+          const isCurrentWeek = weekOffset === 0
 
           // 달성률 순 정렬 (같으면 이름순)
           const sortedStats = [...memberStats].sort((a, b) => {
@@ -735,20 +952,56 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           // 주간 목표
           const sharedTarget = memberStats.length > 0 ? memberStats[0].weeklyTarget : 0
 
+          // 주간 네비게이션 날짜 표시
+          const navWeek = getWeekRangeOffset(weekOffset)
+          const navStartStr = `${navWeek.start.getMonth() + 1}/${navWeek.start.getDate()}`
+          const navEndStr = `${navWeek.end.getMonth() + 1}/${navWeek.end.getDate()}`
+
           return (
             <div className="space-y-3 pb-6">
+              {/* 주간 네비게이션 */}
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setWeekOffset((p) => p - 1)}
+                  className="p-2 text-text-muted hover:text-primary transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+                    <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <div className="text-center">
+                  <p className="text-sm font-bold text-text">
+                    {isCurrentWeek ? '이번 주' : weekOffset === -1 ? '지난 주' : `${navStartStr} ~ ${navEndStr}`}
+                  </p>
+                  {!isCurrentWeek && (
+                    <p className="text-[10px] text-text-muted">{navStartStr} ~ {navEndStr}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setWeekOffset((p) => Math.min(p + 1, 0))}
+                  disabled={isCurrentWeek}
+                  className={`p-2 transition-colors ${isCurrentWeek ? 'text-text-muted/30' : 'text-text-muted hover:text-primary'}`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+                    <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+
               {/* 상단 요약 카드 */}
               <Card className="bg-gradient-to-br from-warning/10 to-warning/5 border-warning/20">
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-sm font-bold text-warning">이번 주 미션 달성 현황</p>
-                  {isSunday ? (
-                    <span className="px-2 py-0.5 bg-danger/10 text-danger text-[10px] font-bold rounded-full animate-pulse">
-                      오늘이 마지막 날!
-                    </span>
-                  ) : (
-                    <span className="px-2 py-0.5 bg-warning/10 text-warning text-[10px] font-bold rounded-full">
-                      남은 기간: {daysLeft}일
-                    </span>
+                  <p className="text-sm font-bold text-warning">{isCurrentWeek ? '이번 주 미션 달성 현황' : '주간 미션 결과'}</p>
+                  {isCurrentWeek && (
+                    isSunday ? (
+                      <span className="px-2 py-0.5 bg-danger/10 text-danger text-[10px] font-bold rounded-full animate-pulse">
+                        오늘이 마지막 날!
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 bg-warning/10 text-warning text-[10px] font-bold rounded-full">
+                        남은 기간: {daysLeft}일
+                      </span>
+                    )
                   )}
                 </div>
                 <div className="flex items-center justify-between">
@@ -804,8 +1057,14 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                         statusColor = 'text-[#EF4444]'
                       }
 
+                      const penaltyAmt = cumulativePenalties[stat.userId] || 0
+
                       return (
-                        <Card key={stat.userId} className={isMe ? 'border-primary/30 bg-primary/5' : ''}>
+                        <Card
+                          key={stat.userId}
+                          className={`cursor-pointer active:scale-[0.98] transition-transform ${isMe ? 'border-primary/30 bg-primary/5' : ''}`}
+                          onClick={() => handleMemberDetail(stat)}
+                        >
                           <div className="flex items-center gap-2.5 mb-2">
                             {/* 순위 */}
                             <span className="text-lg w-7 text-center shrink-0">
@@ -827,6 +1086,11 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                                 {stat.profile.nickname || '알 수 없음'}
                                 {isMe && <span className="text-xs font-normal text-primary/70 ml-1">(나)</span>}
                               </p>
+                              {penaltyAmt > 0 && (
+                                <p className="text-[10px] text-danger font-medium">
+                                  누적 벌금: {penaltyAmt.toLocaleString()}원
+                                </p>
+                              )}
                             </div>
                             {/* 달성 횟수 */}
                             <div className="text-right shrink-0">
@@ -894,7 +1158,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                                 const hasVerif = weeklyVerifMatrix.some(
                                   (v) => v.user_id === member.user_id && v.routine_id === routine.id && new Date(v.verified_at).toDateString() === dayStr
                                 )
-                                const isFuture = dayIdx > todayIdx
+                                const isFuture = weekOffset === 0 && dayIdx > todayIdx
                                 return (
                                   <div key={dayIdx} className="flex items-center justify-center h-6">
                                     {isFuture ? (
@@ -1106,6 +1370,103 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           })}
           <Button fullWidth onClick={() => setShowWeeklyResult(false)}>확인</Button>
         </div>
+      </Modal>
+
+      {/* Member detail modal */}
+      <Modal
+        isOpen={!!selectedMember}
+        onClose={() => { setSelectedMember(null); setMemberVerifHistory([]) }}
+        title={`${selectedMember?.profile.nickname || ''} 상세`}
+      >
+        {selectedMember && (
+          <div className="space-y-4">
+            {/* Profile header */}
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 rounded-full overflow-hidden shrink-0">
+                {selectedMember.profile.avatar_url ? (
+                  <img src={selectedMember.profile.avatar_url} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xl font-bold">
+                    {selectedMember.profile.nickname?.charAt(0) || '?'}
+                  </div>
+                )}
+              </div>
+              <div className="flex-1">
+                <p className="text-base font-bold">{selectedMember.profile.nickname || '알 수 없음'}</p>
+                <p className="text-xs text-text-muted">
+                  이번 주: {selectedMember.weeklyDone}/{selectedMember.weeklyTarget}회 ({selectedMember.rate}%)
+                </p>
+                {(cumulativePenalties[selectedMember.userId] || 0) > 0 && (
+                  <p className="text-xs text-danger font-medium mt-0.5">
+                    누적 벌금: {cumulativePenalties[selectedMember.userId].toLocaleString()}원
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Stats summary */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-bg rounded-xl p-3 text-center">
+                <p className="text-lg font-bold text-primary">{selectedMember.weeklyDone}</p>
+                <p className="text-[10px] text-text-muted">이번 주 인증</p>
+              </div>
+              <div className="bg-bg rounded-xl p-3 text-center">
+                <p className={`text-lg font-bold ${selectedMember.rate >= 100 ? 'text-[#10B981]' : selectedMember.rate >= 50 ? 'text-[#F59E0B]' : 'text-[#EF4444]'}`}>
+                  {selectedMember.rate}%
+                </p>
+                <p className="text-[10px] text-text-muted">달성률</p>
+              </div>
+              <div className="bg-bg rounded-xl p-3 text-center">
+                <p className="text-lg font-bold text-danger">
+                  {(cumulativePenalties[selectedMember.userId] || 0).toLocaleString()}
+                </p>
+                <p className="text-[10px] text-text-muted">누적 벌금(원)</p>
+              </div>
+            </div>
+
+            {/* Verification history */}
+            <div>
+              <p className="text-sm font-bold mb-2">최근 인증 기록</p>
+              {loadingMemberDetail ? (
+                <div className="text-center py-4">
+                  <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+                </div>
+              ) : memberVerifHistory.length === 0 ? (
+                <p className="text-xs text-text-muted text-center py-4">인증 기록이 없습니다</p>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {memberVerifHistory.map((v) => (
+                    <div key={v.id} className="flex items-center gap-2 p-2 bg-bg rounded-lg">
+                      {v.photo_url ? (
+                        <img src={v.photo_url} alt="" className="w-10 h-10 rounded-lg object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center shrink-0">
+                          <span className="text-sm">✅</span>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold truncate">{v.routines?.title || '루틴'}</p>
+                        <p className="text-[10px] text-text-muted">
+                          {formatDate(v.verified_at)}
+                          {v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type] && (
+                            <span className="ml-1 text-secondary">
+                              · {EXERCISE_TYPE_LABELS[v.exercise_type]}
+                              {v.exercise_amount && ` ${v.exercise_amount}`}
+                            </span>
+                          )}
+                        </p>
+                        {v.memo && <p className="text-[10px] text-text-secondary truncate mt-0.5">{v.memo}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <Button fullWidth variant="ghost" onClick={() => { setSelectedMember(null); setMemberVerifHistory([]) }}>
+              닫기
+            </Button>
+          </div>
+        )}
       </Modal>
     </>
   )

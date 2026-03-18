@@ -21,6 +21,13 @@ export function getWeekRange(): { start: Date; end: Date } {
   return { start, end }
 }
 
+export function getWeekRangeOffset(offset: number): { start: Date; end: Date } {
+  const { start, end } = getWeekRange()
+  start.setDate(start.getDate() + offset * 7)
+  end.setDate(end.getDate() + offset * 7)
+  return { start, end }
+}
+
 export function getMonthRange(): { start: Date; end: Date } {
   const now = new Date()
   const start = new Date(now.getFullYear(), now.getMonth(), 1)
