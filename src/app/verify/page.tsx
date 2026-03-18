@@ -626,7 +626,26 @@ export default function VerifyPage() {
         </Card>
 
         {/* Already verified today notice */}
-        {isAlreadyVerifiedToday && (
+        {isAlreadyVerifiedToday && !isDevMode && (
+          <div className="flex items-center gap-2 p-3 bg-success/10 border border-success/20 rounded-xl">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="w-5 h-5 text-success shrink-0"
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+                clipRule="evenodd"
+              />
+            </svg>
+            <p className="text-sm text-success font-medium">
+              오늘 이미 인증 완료! 하루에 1회만 인정됩니다
+            </p>
+          </div>
+        )}
+        {isAlreadyVerifiedToday && isDevMode && (
           <div className="flex items-center gap-2 p-3 bg-warning/10 border border-warning/20 rounded-xl">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -641,7 +660,7 @@ export default function VerifyPage() {
               />
             </svg>
             <p className="text-sm text-warning font-medium">
-              오늘 이미 인증 완료! 추가 기록만 저장됩니다
+              [DEV] 오늘 이미 인증됨 — 테스트 모드로 추가 인증 가능
             </p>
           </div>
         )}
@@ -781,10 +800,11 @@ export default function VerifyPage() {
           onClick={handleVerify}
           loading={submitting}
           disabled={
-            selectedRoutine.verification_type === 'photo' && !photo
+            (isAlreadyVerifiedToday && !isDevMode) ||
+            (selectedRoutine.verification_type === 'photo' && !photo)
           }
         >
-          인증 완료
+          {isAlreadyVerifiedToday && !isDevMode ? '오늘 인증 완료됨' : '인증 완료'}
         </Button>
       </div>
     </>

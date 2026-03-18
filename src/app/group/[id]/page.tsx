@@ -787,7 +787,10 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                       // 상태 메시지
                       let statusMsg: string
                       let statusColor: string
-                      if (isComplete) {
+                      if (stat.weeklyDone > stat.weeklyTarget && stat.weeklyTarget > 0) {
+                        statusMsg = `초과 달성! (${stat.weeklyDone - stat.weeklyTarget}회 추가) ✅`
+                        statusColor = 'text-[#10B981]'
+                      } else if (isComplete) {
                         statusMsg = '완료! ✅'
                         statusColor = 'text-[#10B981]'
                       } else if (stat.rate >= 50) {
@@ -1031,12 +1034,19 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          <div className="w-full max-w-lg px-4" onClick={(e) => e.stopPropagation()}>
-            <img src={viewingPhoto.photo_url!} alt="인증 사진" className="w-full rounded-xl" />
+          <div className="w-full max-w-2xl px-4" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={viewingPhoto.photo_url!}
+              alt="인증 사진"
+              className="w-full max-h-[75vh] object-contain rounded-xl cursor-pointer"
+              onClick={() => window.open(viewingPhoto.photo_url!, '_blank')}
+              title="클릭하면 원본 크기로 열립니다"
+            />
             <div className="mt-3 text-center text-white">
               <p className="text-sm font-semibold">{viewingPhoto.profiles?.nickname || '알 수 없음'}</p>
               <p className="text-xs text-white/70">{formatDate(viewingPhoto.verified_at)}</p>
               {viewingPhoto.memo && <p className="text-sm mt-2 text-white/90">{viewingPhoto.memo}</p>}
+              <p className="text-[10px] text-white/40 mt-2">사진을 클릭하면 원본 크기로 볼 수 있습니다</p>
             </div>
           </div>
         </div>
