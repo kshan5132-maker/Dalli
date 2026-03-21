@@ -76,6 +76,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   // Like/dislike reactions state
   const [reactions, setReactions] = useState<Record<string, VerificationReaction[]>>({})
   const [reactingId, setReactingId] = useState<string | null>(null)
+  const [reactionDetailVId, setReactionDetailVId] = useState<string | null>(null)
 
   // Week navigation offset (0 = this week, -1 = last week, etc.)
   const [weekOffset, setWeekOffset] = useState(0)
@@ -570,6 +571,37 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
     }
   }
 
+  // -- Share verification --
+  const handleShare = async (v: Verification & { profiles: Profile; routines: Routine }) => {
+    const nickname = v.profiles?.nickname || '알 수 없음'
+    const routineTitle = v.routines?.title || '루틴'
+    const exerciseInfo = v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type]
+      ? ` (${EXERCISE_TYPE_LABELS[v.exercise_type]}${v.exercise_amount ? ` ${v.exercise_amount}` : ''})`
+      : ''
+    const text = `${nickname}님이 "${routineTitle}"${exerciseInfo}을 인증했어요! - Dalli`
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ text })
+      } catch {
+        // 공유 취소 시 무시
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(text)
+        alert('클립보드에 복사되었습니다!')
+      } catch {
+        // fallback
+      }
+    }
+  }
+
+  // -- Get member nickname by user_id --
+  const getMemberNickname = (userId: string) => {
+    const member = members.find(m => m.user_id === userId)
+    return member?.profiles?.nickname || '알 수 없음'
+  }
+
   // -- Load member detail (verification history) --
   const handleMemberDetail = async (stat: MemberStats) => {
     setSelectedMember(stat)
@@ -828,7 +860,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                             />
                           </div>
                         )}
-                        {/* Like / Dislike buttons */}
+                        {/* Like / Dislike / Share buttons (YouTube style) */}
                         {(() => {
                           const vReactions = reactions[v.id] || []
                           const likes = vReactions.filter((r) => r.type === 'like').length
@@ -837,34 +869,67 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                           const totalMembers = members.length
                           const isInvalid = totalMembers > 1 && dislikes > totalMembers / 2
                           return (
-                            <div className="flex items-center gap-3 mt-2 pt-2 border-t border-border/50">
-                              <button
-                                onClick={() => handleReaction(v.id, 'like')}
-                                disabled={reactingId === v.id}
-                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors ${
-                                  myReaction?.type === 'like'
-                                    ? 'bg-primary/10 text-primary font-semibold'
-                                    : 'text-text-muted hover:bg-bg'
-                                }`}
-                              >
-                                👍 {likes > 0 && likes}
-                              </button>
-                              <button
-                                onClick={() => handleReaction(v.id, 'dislike')}
-                                disabled={reactingId === v.id}
-                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition-colors ${
-                                  myReaction?.type === 'dislike'
-                                    ? 'bg-danger/10 text-danger font-semibold'
-                                    : 'text-text-muted hover:bg-bg'
-                                }`}
-                              >
-                                👎 {dislikes > 0 && dislikes}
-                              </button>
-                              {isInvalid && (
-                                <span className="text-[10px] text-danger font-bold ml-auto">
-                                  ⚠️ 과반수 이의 — 인증 무효
-                                </span>
-                              )}
+                            <div className="mt-2 pt-2 border-t border-border/50">
+                              <div className="flex items-center gap-2">
+                                {/* Like/Dislike pill */}
+                                <div className="flex items-center bg-bg rounded-full overflow-hidden">
+                                  <button
+                                    onClick={() => handleReaction(v.id, 'like')}
+                                    disabled={reactingId === v.id}
+                                    className={`flex items-center gap-1 text-xs px-3 py-1.5 transition-colors ${
+                                      myReaction?.type === 'like'
+                                        ? 'bg-primary/15 text-primary font-semibold'
+                                        : 'text-text-secondary hover:bg-bg-card'
+                                    }`}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-4 h-4" fill={myReaction?.type === 'like' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" />
+                                    </svg>
+                                    <span
+                                      className="cursor-pointer"
+                                      onClick={(e) => { e.stopPropagation(); if (likes > 0) setReactionDetailVId(v.id) }}
+                                    >
+                                      {likes > 0 ? likes : ''}
+                                    </span>
+                                  </button>
+                                  <div className="w-px h-4 bg-border" />
+                                  <button
+                                    onClick={() => handleReaction(v.id, 'dislike')}
+                                    disabled={reactingId === v.id}
+                                    className={`flex items-center gap-1 text-xs px-3 py-1.5 transition-colors ${
+                                      myReaction?.type === 'dislike'
+                                        ? 'bg-danger/15 text-danger font-semibold'
+                                        : 'text-text-secondary hover:bg-bg-card'
+                                    }`}
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-4 h-4" fill={myReaction?.type === 'dislike' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10zM17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17" />
+                                    </svg>
+                                    <span
+                                      className="cursor-pointer"
+                                      onClick={(e) => { e.stopPropagation(); if (dislikes > 0) setReactionDetailVId(v.id) }}
+                                    >
+                                      {dislikes > 0 ? dislikes : ''}
+                                    </span>
+                                  </button>
+                                </div>
+                                {/* Share button */}
+                                <button
+                                  onClick={() => handleShare(v)}
+                                  className="flex items-center gap-1 text-xs px-3 py-1.5 bg-bg rounded-full text-text-secondary hover:bg-bg-card transition-colors"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                                    <path d="M13 4.5a2.5 2.5 0 115 0 2.5 2.5 0 01-5 0zM15.5 0a4.5 4.5 0 00-3.826 6.852l-4.288 2.572a4.5 4.5 0 100 5.152l4.288 2.572a4.5 4.5 0 10.914-1.524l-4.288-2.572a4.534 4.534 0 000-2.104l4.288-2.572A4.5 4.5 0 0015.5 0zM5.5 13a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM18 15.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                                  </svg>
+                                  공유
+                                </button>
+                                {/* Invalid warning */}
+                                {isInvalid && (
+                                  <span className="text-[10px] text-danger font-bold ml-auto">
+                                    인증 무효
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           )
                         })()}
@@ -1370,6 +1435,66 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           })}
           <Button fullWidth onClick={() => setShowWeeklyResult(false)}>확인</Button>
         </div>
+      </Modal>
+
+      {/* Reaction detail modal */}
+      <Modal
+        isOpen={!!reactionDetailVId}
+        onClose={() => setReactionDetailVId(null)}
+        title="리액션"
+      >
+        {reactionDetailVId && (() => {
+          const vReactions = reactions[reactionDetailVId] || []
+          const likers = vReactions.filter(r => r.type === 'like')
+          const dislikers = vReactions.filter(r => r.type === 'dislike')
+          return (
+            <div className="space-y-4">
+              {likers.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-text-muted mb-2 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-4 h-4 text-primary" fill="currentColor" stroke="currentColor" strokeWidth="0">
+                      <path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3" />
+                    </svg>
+                    좋아요 {likers.length}
+                  </p>
+                  <div className="space-y-1.5">
+                    {likers.map(r => (
+                      <div key={r.id} className="flex items-center gap-2 p-2 bg-primary/5 rounded-lg">
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-bold shrink-0">
+                          {getMemberNickname(r.user_id).charAt(0)}
+                        </div>
+                        <span className="text-sm font-medium">{getMemberNickname(r.user_id)}</span>
+                        {r.user_id === user?.id && <span className="text-[10px] text-primary">(나)</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {dislikers.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-text-muted mb-2 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-4 h-4 text-danger" fill="currentColor" stroke="currentColor" strokeWidth="0">
+                      <path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10zM17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17" />
+                    </svg>
+                    싫어요 {dislikers.length}
+                  </p>
+                  <div className="space-y-1.5">
+                    {dislikers.map(r => (
+                      <div key={r.id} className="flex items-center gap-2 p-2 bg-danger/5 rounded-lg">
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-danger to-red-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                          {getMemberNickname(r.user_id).charAt(0)}
+                        </div>
+                        <span className="text-sm font-medium">{getMemberNickname(r.user_id)}</span>
+                        {r.user_id === user?.id && <span className="text-[10px] text-danger">(나)</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <Button fullWidth variant="ghost" onClick={() => setReactionDetailVId(null)}>닫기</Button>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* Member detail modal */}

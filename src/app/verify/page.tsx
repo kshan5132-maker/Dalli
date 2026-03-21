@@ -649,7 +649,7 @@ export default function VerifyPage() {
               />
             </svg>
             <p className="text-sm text-success font-medium">
-              오늘 이미 인증 완료! 하루에 1회만 인정됩니다
+              오늘 인증 완료! 추가 인증은 피드에만 표시돼요
             </p>
           </div>
         )}
@@ -836,11 +836,10 @@ export default function VerifyPage() {
           onClick={handleVerify}
           loading={submitting}
           disabled={
-            (isAlreadyVerifiedToday && !isDevMode) ||
             (selectedRoutine.verification_type === 'photo' && !photo)
           }
         >
-          {isAlreadyVerifiedToday && !isDevMode ? '오늘 인증 완료됨' : '인증 완료'}
+          {isAlreadyVerifiedToday && !isDevMode ? '추가 인증하기' : '인증 완료'}
         </Button>
       </div>
     </>
