@@ -572,27 +572,62 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   // -- Share verification --
-  const handleShare = async (v: Verification & { profiles: Profile; routines: Routine }) => {
+  const [shareTarget, setShareTarget] = useState<(Verification & { profiles: Profile; routines: Routine }) | null>(null)
+  const [shareCopied, setShareCopied] = useState(false)
+
+  const getShareText = (v: Verification & { profiles: Profile; routines: Routine }) => {
     const nickname = v.profiles?.nickname || '알 수 없음'
     const routineTitle = v.routines?.title || '루틴'
     const exerciseInfo = v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type]
       ? ` (${EXERCISE_TYPE_LABELS[v.exercise_type]}${v.exercise_amount ? ` ${v.exercise_amount}` : ''})`
       : ''
-    const text = `${nickname}님이 "${routineTitle}"${exerciseInfo}을 인증했어요! - Dalli`
+    return `${nickname}님이 "${routineTitle}"${exerciseInfo}을 인증했어요!`
+  }
 
-    if (navigator.share) {
+  const handleShareCopy = async (type: 'text' | 'photo') => {
+    if (!shareTarget) return
+    const text = getShareText(shareTarget)
+
+    if (type === 'photo' && shareTarget.photo_url) {
+      const fullText = `${text}\n${shareTarget.photo_url}`
       try {
-        await navigator.share({ text })
+        await navigator.clipboard.writeText(fullText)
       } catch {
-        // 공유 취소 시 무시
+        const ta = document.createElement('textarea')
+        ta.value = fullText
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
       }
     } else {
       try {
         await navigator.clipboard.writeText(text)
-        alert('클립보드에 복사되었습니다!')
       } catch {
-        // fallback
+        const ta = document.createElement('textarea')
+        ta.value = text
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
       }
+    }
+    setShareCopied(true)
+    setTimeout(() => { setShareCopied(false); setShareTarget(null) }, 1500)
+  }
+
+  const handleShareNative = async () => {
+    if (!shareTarget) return
+    const text = getShareText(shareTarget)
+    const shareData: ShareData = {
+      text: text + '\n\n- Dalli',
+      url: window.location.href,
+    }
+    try {
+      await navigator.share(shareData)
+      setShareTarget(null)
+    } catch {
+      // 취소 시 무시
     }
   }
 
@@ -915,7 +950,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                                 </div>
                                 {/* Share button */}
                                 <button
-                                  onClick={() => handleShare(v)}
+                                  onClick={() => setShareTarget(v)}
                                   className="flex items-center gap-1 text-xs px-3 py-1.5 bg-bg rounded-full text-text-secondary hover:bg-bg-card transition-colors"
                                 >
                                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
@@ -1435,6 +1470,88 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
           })}
           <Button fullWidth onClick={() => setShowWeeklyResult(false)}>확인</Button>
         </div>
+      </Modal>
+
+      {/* Share bottom sheet */}
+      <Modal
+        isOpen={!!shareTarget}
+        onClose={() => { setShareTarget(null); setShareCopied(false) }}
+        title="공유하기"
+      >
+        {shareTarget && (
+          <div className="space-y-3">
+            {/* Preview */}
+            <div className="bg-bg rounded-xl p-3">
+              <p className="text-sm font-medium">{getShareText(shareTarget)}</p>
+              {shareTarget.memo && (
+                <p className="text-xs text-text-muted mt-1">{shareTarget.memo}</p>
+              )}
+            </div>
+
+            {/* Share options */}
+            <div className="space-y-2">
+              {/* Copy text */}
+              <button
+                onClick={() => handleShareCopy('text')}
+                className="w-full flex items-center gap-3 p-3 bg-bg rounded-xl hover:bg-bg-card transition-colors text-left"
+              >
+                <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-primary">
+                    <path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12A1.5 1.5 0 0117 6.622V12.5a1.5 1.5 0 01-1.5 1.5h-1v-3.379a3 3 0 00-.879-2.121L10.5 5.379A3 3 0 008.379 4.5H7v-1z" />
+                    <path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-5.879a1.5 1.5 0 00-.44-1.06L9.44 6.439A1.5 1.5 0 008.378 6H4.5z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">텍스트 복사</p>
+                  <p className="text-[10px] text-text-muted">인증 내용을 클립보드에 복사</p>
+                </div>
+              </button>
+
+              {/* Copy with photo URL */}
+              {shareTarget.photo_url && (
+                <button
+                  onClick={() => handleShareCopy('photo')}
+                  className="w-full flex items-center gap-3 p-3 bg-bg rounded-xl hover:bg-bg-card transition-colors text-left"
+                >
+                  <div className="w-10 h-10 bg-secondary/10 rounded-full flex items-center justify-center shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-secondary">
+                      <path fillRule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909.47.47a.75.75 0 11-1.06 1.06L6.53 8.091a.75.75 0 00-1.06 0l-3.47 3.47z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold">사진 포함 복사</p>
+                    <p className="text-[10px] text-text-muted">인증 내용 + 사진 링크 복사</p>
+                  </div>
+                </button>
+              )}
+
+              {/* Native share (if supported) */}
+              {typeof navigator !== 'undefined' && 'share' in navigator && (
+                <button
+                  onClick={handleShareNative}
+                  className="w-full flex items-center gap-3 p-3 bg-bg rounded-xl hover:bg-bg-card transition-colors text-left"
+                >
+                  <div className="w-10 h-10 bg-success/10 rounded-full flex items-center justify-center shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-success">
+                      <path d="M13 4.5a2.5 2.5 0 115 0 2.5 2.5 0 01-5 0zM15.5 0a4.5 4.5 0 00-3.826 6.852l-4.288 2.572a4.5 4.5 0 100 5.152l4.288 2.572a4.5 4.5 0 10.914-1.524l-4.288-2.572a4.534 4.534 0 000-2.104l4.288-2.572A4.5 4.5 0 0015.5 0zM5.5 13a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM18 15.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold">다른 앱으로 공유</p>
+                    <p className="text-[10px] text-text-muted">카카오톡, 인스타 등</p>
+                  </div>
+                </button>
+              )}
+            </div>
+
+            {/* Copied toast */}
+            {shareCopied && (
+              <div className="text-center py-2">
+                <span className="text-sm font-semibold text-success">복사 완료!</span>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
 
       {/* Reaction detail modal */}
