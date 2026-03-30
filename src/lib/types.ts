@@ -46,6 +46,7 @@ export type GroupMember = {
 export type ExerciseEntry = {
   type: string
   amount: string
+  photo_url?: string | null
 }
 
 export type Verification = {

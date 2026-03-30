@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/components/AuthProvider'
@@ -10,8 +10,8 @@ import Button from '@/components/Button'
 import Card from '@/components/Card'
 import ErrorRetry from '@/components/ErrorRetry'
 import { VerifySkeleton } from '@/components/Skeleton'
-import type { Routine, ExerciseEntry } from '@/lib/types'
-import { FREQUENCY_LABELS, FREQUENCY_TARGETS, VERIFICATION_TYPE_LABELS, EXERCISE_TYPES, EXERCISE_TYPE_LABELS } from '@/lib/types'
+import type { Routine } from '@/lib/types'
+import { FREQUENCY_LABELS, FREQUENCY_TARGETS, VERIFICATION_TYPE_LABELS, EXERCISE_TYPES } from '@/lib/types'
 import { getWeekRange } from '@/lib/utils'
 
 type TabType = 'personal' | 'group'
@@ -24,8 +24,9 @@ export default function VerifyPage() {
   const router = useRouter()
   const supabase = createClient()
   const { user, loading: authLoading } = useAuth()
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const galleryInputRef = useRef<HTMLInputElement>(null)
+
+  type ExerciseBlock = { type: string; amount: string; photo: File | null; photoPreview: string | null }
+  const emptyBlock = (): ExerciseBlock => ({ type: '', amount: '', photo: null, photoPreview: null })
 
   const [activeTab, setActiveTab] = useState<TabType>('personal')
   const [personalRoutines, setPersonalRoutines] = useState<Routine[]>([])
@@ -33,10 +34,8 @@ export default function VerifyPage() {
   const [weeklyVerifications, setWeeklyVerifications] = useState<Record<string, number>>({})
   const [todayVerified, setTodayVerified] = useState<Set<string>>(new Set())
   const [selectedRoutine, setSelectedRoutine] = useState<Routine | null>(null)
-  const [photo, setPhoto] = useState<File | null>(null)
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
+  const [blocks, setBlocks] = useState<ExerciseBlock[]>([emptyBlock()])
   const [memo, setMemo] = useState('')
-  const [exercises, setExercises] = useState<ExerciseEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -182,26 +181,28 @@ export default function VerifyPage() {
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBlockPhoto = (blockIndex: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // File type validation
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
     if (!allowedTypes.includes(file.type)) {
       alert('JPG, PNG, WebP, HEIC, HEIF 형식의 이미지만 업로드할 수 있습니다.')
       return
     }
-
-    // File size validation (10MB)
     if (file.size > 10 * 1024 * 1024) {
       alert('10MB 이하의 이미지만 업로드할 수 있습니다.')
       return
     }
 
-    setPhoto(file)
     const reader = new FileReader()
-    reader.onload = () => setPhotoPreview(reader.result as string)
+    reader.onload = () => {
+      setBlocks(prev => {
+        const updated = [...prev]
+        updated[blockIndex] = { ...updated[blockIndex], photo: file, photoPreview: reader.result as string }
+        return updated
+      })
+    }
     reader.readAsDataURL(file)
   }
 
@@ -258,55 +259,57 @@ export default function VerifyPage() {
     setSubmitting(true)
 
     try {
-      let photoUrl: string | null = null
-
-      // Upload photo if photo verification
-      if (selectedRoutine.verification_type === 'photo' && photo) {
-        const extMap: Record<string, string> = {
-          'image/jpeg': 'jpg',
-          'image/png': 'png',
-          'image/webp': 'webp',
-          'image/heic': 'heic',
-          'image/heif': 'heif',
+      // Upload photos for all blocks
+      const extMap: Record<string, string> = {
+        'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+        'image/heic': 'heic', 'image/heif': 'heif',
+      }
+      const photoUrls: (string | null)[] = []
+      for (const block of blocks) {
+        if (block.photo) {
+          const fileExt = extMap[block.photo.type] || 'jpg'
+          const fileName = `${user.id}/${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${fileExt}`
+          const { error: uploadError } = await supabase.storage.from('verifications').upload(fileName, block.photo)
+          if (uploadError) { alert('사진 업로드에 실패했습니다.'); return }
+          const { data: urlData } = supabase.storage.from('verifications').getPublicUrl(fileName)
+          photoUrls.push(urlData.publicUrl)
+        } else {
+          photoUrls.push(null)
         }
-        const fileExt = extMap[photo.type] || 'jpg'
-        const fileName = `${user.id}/${Date.now()}.${fileExt}`
-
-        const { error: uploadError } = await supabase.storage
-          .from('verifications')
-          .upload(fileName, photo)
-
-        if (uploadError) {
-          alert('사진 업로드에 실패했습니다.')
-          return
-        }
-
-        const { data: urlData } = supabase.storage
-          .from('verifications')
-          .getPublicUrl(fileName)
-
-        photoUrl = urlData.publicUrl
       }
 
+      // Build exercises data
+      const exercisesData = blocks
+        .map((b, i) => ({ type: b.type, amount: b.amount.trim(), photo_url: photoUrls[i] || null }))
+        .filter(e => e.type || e.photo_url)
+
+      const firstPhotoUrl = photoUrls.find(u => u !== null) || null
+      const firstExercise = blocks.find(b => b.type)
+
       // Save verification record
-      const validExercises = exercises.filter(e => e.type)
       const isAlreadyVerified = todayVerified.has(selectedRoutine.id)
-      const { error: verifyError } = await supabase.from('verifications').insert({
+      const baseData = {
         routine_id: selectedRoutine.id,
         user_id: user.id,
         group_id: selectedRoutine.group_id,
-        photo_url: photoUrl,
+        photo_url: firstPhotoUrl,
         memo: memo.trim() || null,
-        // 하위 호환: 첫 번째 운동을 기존 컬럼에도 저장
-        exercise_type: validExercises[0]?.type || null,
-        exercise_amount: validExercises[0]?.amount?.trim() || null,
-        // 새로운 다중 운동 배열
-        exercises: validExercises.length > 0 ? validExercises : null,
+        exercise_type: firstExercise?.type || null,
+        exercise_amount: firstExercise?.amount?.trim() || null,
+      }
+
+      // exercises 컬럼 포함 시도, 실패 시 없이 재시도 (DB 마이그레이션 전 호환)
+      const { error: verifyError } = await supabase.from('verifications').insert({
+        ...baseData,
+        exercises: exercisesData.length > 0 ? exercisesData : null,
       })
 
       if (verifyError) {
-        alert('인증 저장에 실패했습니다.')
-        return
+        const { error: retryError } = await supabase.from('verifications').insert(baseData)
+        if (retryError) {
+          alert('인증 저장에 실패했습니다.')
+          return
+        }
       }
 
       // Calculate weekly count after this verification
@@ -346,10 +349,8 @@ export default function VerifyPage() {
     setSuccess(false)
     setCelebration(false)
     setSelectedRoutine(null)
-    setPhoto(null)
-    setPhotoPreview(null)
+    setBlocks([emptyBlock()])
     setMemo('')
-    setExercises([])
     setStreak(0)
     if (user) loadData(user.id)
   }
@@ -610,10 +611,8 @@ export default function VerifyPage() {
           <button
             onClick={() => {
               setSelectedRoutine(null)
-              setPhoto(null)
-              setPhotoPreview(null)
+              setBlocks([emptyBlock()])
               setMemo('')
-              setExercises([])
             }}
             className="text-sm text-text-secondary"
           >
@@ -674,175 +673,141 @@ export default function VerifyPage() {
           </div>
         )}
 
-        {/* Photo verification UI */}
-        {selectedRoutine.verification_type === 'photo' ? (
-          <div>
-            <label className="block text-sm font-medium text-text mb-2">
-              인증 사진
-            </label>
-            {/* 카메라 전용 input (capture 속성으로 카메라 직접 열림) */}
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            {/* 갤러리 전용 input (capture 없이 갤러리에서 선택) */}
-            <input
-              ref={galleryInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-
-            {photoPreview ? (
-              <div className="relative rounded-2xl overflow-hidden">
-                <img
-                  src={photoPreview}
-                  alt="인증 사진"
-                  className="w-full h-64 object-cover"
-                />
-                <button
-                  onClick={() => {
-                    setPhoto(null)
-                    setPhotoPreview(null)
-                    if (cameraInputRef.current) cameraInputRef.current.value = ''
-                    if (galleryInputRef.current) galleryInputRef.current.value = ''
-                  }}
-                  className="absolute top-2 right-2 w-8 h-8 bg-black/50 rounded-full flex items-center justify-center text-white"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    className="w-4 h-4"
-                  >
-                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                  </svg>
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="flex flex-col items-center justify-center gap-2 py-8 bg-bg border-2 border-dashed border-border rounded-xl hover:border-primary/30 transition-colors"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="w-8 h-8 text-text-muted"
-                  >
-                    <path d="M12 9a3.75 3.75 0 100 7.5A3.75 3.75 0 0012 9z" />
-                    <path
-                      fillRule="evenodd"
-                      d="M9.344 3.071a49.52 49.52 0 015.312 0c.967.052 1.83.585 2.332 1.39l.821 1.317c.24.383.645.643 1.11.71.386.054.77.113 1.152.177 1.432.239 2.429 1.493 2.429 2.909V18a3 3 0 01-3 3H4.5a3 3 0 01-3-3V9.574c0-1.416.997-2.67 2.429-2.909.382-.064.766-.123 1.151-.178a1.56 1.56 0 001.11-.71l.822-1.315a2.942 2.942 0 012.332-1.39zM6.75 12.75a5.25 5.25 0 1110.5 0 5.25 5.25 0 01-10.5 0zm12-1.5a.75.75 0 100-1.5.75.75 0 000 1.5z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <span className="text-sm text-text-secondary font-medium">
-                    카메라
-                  </span>
-                </button>
-                <button
-                  onClick={() => galleryInputRef.current?.click()}
-                  className="flex flex-col items-center justify-center gap-2 py-8 bg-bg border-2 border-dashed border-border rounded-xl hover:border-primary/30 transition-colors"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="w-8 h-8 text-text-muted"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M1.5 6a2.25 2.25 0 012.25-2.25h16.5A2.25 2.25 0 0122.5 6v12a2.25 2.25 0 01-2.25 2.25H3.75A2.25 2.25 0 011.5 18V6zM3 16.06V18c0 .414.336.75.75.75h16.5A.75.75 0 0021 18v-1.94l-2.69-2.689a1.5 1.5 0 00-2.12 0l-.88.879.97.97a.75.75 0 11-1.06 1.06l-5.16-5.159a1.5 1.5 0 00-2.12 0L3 16.061zm10.125-7.81a1.125 1.125 0 112.25 0 1.125 1.125 0 01-2.25 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <span className="text-sm text-text-secondary font-medium">
-                    갤러리
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          /* Check verification UI */
-          <Card className="text-center py-6 bg-secondary/5 border-secondary/20">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="w-12 h-12 text-secondary mx-auto mb-2"
-            >
-              <path
-                fillRule="evenodd"
-                d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z"
-                clipRule="evenodd"
-              />
+        {/* Check verification header */}
+        {selectedRoutine.verification_type !== 'photo' && (
+          <Card className="text-center py-4 bg-secondary/5 border-secondary/20">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-10 h-10 text-secondary mx-auto mb-1">
+              <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clipRule="evenodd" />
             </svg>
             <p className="text-sm font-semibold text-secondary">체크 인증</p>
-            <p className="text-xs text-text-muted mt-1">
-              버튼을 누르면 인증됩니다
-            </p>
           </Card>
         )}
 
-        {/* Exercise entries - 다중 운동 추가 */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="block text-sm font-medium text-text">운동 기록</label>
-            {exercises.length > 0 && (
-              <span className="text-xs text-text-muted">{exercises.length}개</span>
-            )}
-          </div>
+        {/* Exercise blocks - 각 블록 = 사진 + 운동 종류 + 운동량 */}
+        <div className="space-y-4">
+          {blocks.map((block, index) => (
+            <div key={index} className="rounded-2xl border border-border bg-bg-card overflow-hidden">
+              {/* Block header */}
+              <div className="flex items-center justify-between px-4 pt-3 pb-1">
+                <span className="text-sm font-semibold text-text">
+                  운동 {index + 1}
+                </span>
+                {index > 0 && (
+                  <button
+                    onClick={() => setBlocks(blocks.filter((_, i) => i !== index))}
+                    className="text-xs text-text-muted hover:text-error transition-colors"
+                  >
+                    삭제
+                  </button>
+                )}
+              </div>
 
-          {exercises.map((exercise, index) => (
-            <div key={index} className="flex items-start gap-2 p-3 bg-bg rounded-xl border border-border">
-              <div className="flex-1 space-y-2">
+              <div className="px-4 pb-4 space-y-3">
+                {/* Photo area */}
+                <div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => handleBlockPhoto(index, e)}
+                    className="hidden"
+                    id={`camera-${index}`}
+                  />
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                    onChange={(e) => handleBlockPhoto(index, e)}
+                    className="hidden"
+                    id={`gallery-${index}`}
+                  />
+
+                  {block.photoPreview ? (
+                    <div className="relative rounded-xl overflow-hidden">
+                      <img src={block.photoPreview} alt="인증 사진" className="w-full h-48 object-cover" />
+                      <button
+                        onClick={() => {
+                          setBlocks(prev => {
+                            const updated = [...prev]
+                            updated[index] = { ...updated[index], photo: null, photoPreview: null }
+                            return updated
+                          })
+                          const camEl = document.getElementById(`camera-${index}`) as HTMLInputElement
+                          const galEl = document.getElementById(`gallery-${index}`) as HTMLInputElement
+                          if (camEl) camEl.value = ''
+                          if (galEl) galEl.value = ''
+                        }}
+                        className="absolute top-2 right-2 w-7 h-7 bg-black/50 rounded-full flex items-center justify-center text-white"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => (document.getElementById(`camera-${index}`) as HTMLInputElement)?.click()}
+                        className="flex flex-col items-center justify-center gap-1.5 py-5 bg-bg border-2 border-dashed border-border rounded-xl hover:border-primary/30 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-text-muted">
+                          <path d="M12 9a3.75 3.75 0 100 7.5A3.75 3.75 0 0012 9z" />
+                          <path fillRule="evenodd" d="M9.344 3.071a49.52 49.52 0 015.312 0c.967.052 1.83.585 2.332 1.39l.821 1.317c.24.383.645.643 1.11.71.386.054.77.113 1.152.177 1.432.239 2.429 1.493 2.429 2.909V18a3 3 0 01-3 3H4.5a3 3 0 01-3-3V9.574c0-1.416.997-2.67 2.429-2.909.382-.064.766-.123 1.151-.178a1.56 1.56 0 001.11-.71l.822-1.315a2.942 2.942 0 012.332-1.39zM6.75 12.75a5.25 5.25 0 1110.5 0 5.25 5.25 0 01-10.5 0zm12-1.5a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
+                        </svg>
+                        <span className="text-xs text-text-secondary font-medium">카메라</span>
+                      </button>
+                      <button
+                        onClick={() => (document.getElementById(`gallery-${index}`) as HTMLInputElement)?.click()}
+                        className="flex flex-col items-center justify-center gap-1.5 py-5 bg-bg border-2 border-dashed border-border rounded-xl hover:border-primary/30 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-text-muted">
+                          <path fillRule="evenodd" d="M1.5 6a2.25 2.25 0 012.25-2.25h16.5A2.25 2.25 0 0122.5 6v12a2.25 2.25 0 01-2.25 2.25H3.75A2.25 2.25 0 011.5 18V6zM3 16.06V18c0 .414.336.75.75.75h16.5A.75.75 0 0021 18v-1.94l-2.69-2.689a1.5 1.5 0 00-2.12 0l-.88.879.97.97a.75.75 0 11-1.06 1.06l-5.16-5.159a1.5 1.5 0 00-2.12 0L3 16.061zm10.125-7.81a1.125 1.125 0 112.25 0 1.125 1.125 0 01-2.25 0z" clipRule="evenodd" />
+                        </svg>
+                        <span className="text-xs text-text-secondary font-medium">갤러리</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Exercise type */}
                 <select
-                  value={exercise.type}
+                  value={block.type}
                   onChange={(e) => {
-                    const updated = [...exercises]
-                    updated[index] = { ...updated[index], type: e.target.value }
-                    setExercises(updated)
+                    setBlocks(prev => {
+                      const updated = [...prev]
+                      updated[index] = { ...updated[index], type: e.target.value }
+                      return updated
+                    })
                   }}
-                  className="w-full px-3 py-2.5 bg-bg-card border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors appearance-none"
+                  className="w-full px-3 py-2.5 bg-bg border border-border rounded-xl text-sm text-text focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors appearance-none"
                 >
-                  {EXERCISE_TYPES.filter(t => t.value !== '').map((t) => (
+                  {EXERCISE_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </select>
-                <input
-                  type="text"
-                  value={exercise.amount}
-                  onChange={(e) => {
-                    const updated = [...exercises]
-                    updated[index] = { ...updated[index], amount: e.target.value }
-                    setExercises(updated)
-                  }}
-                  placeholder="운동량 (예: 30분, 5km, 3세트)"
-                  className="w-full px-3 py-2.5 bg-bg-card border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
-                />
+
+                {/* Exercise amount */}
+                {block.type && (
+                  <input
+                    type="text"
+                    value={block.amount}
+                    onChange={(e) => {
+                      setBlocks(prev => {
+                        const updated = [...prev]
+                        updated[index] = { ...updated[index], amount: e.target.value }
+                        return updated
+                      })
+                    }}
+                    placeholder="운동량 (예: 30분, 5km, 3세트)"
+                    className="w-full px-3 py-2.5 bg-bg border border-border rounded-xl text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
+                  />
+                )}
               </div>
-              <button
-                onClick={() => setExercises(exercises.filter((_, i) => i !== index))}
-                className="mt-1 w-8 h-8 flex items-center justify-center text-text-muted hover:text-error rounded-lg hover:bg-error/10 transition-colors shrink-0"
-                aria-label="운동 삭제"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                </svg>
-              </button>
             </div>
           ))}
 
+          {/* 운동 추가하기 버튼 */}
           <button
-            onClick={() => setExercises([...exercises, { type: 'weight', amount: '' }])}
+            onClick={() => setBlocks([...blocks, { type: 'weight', amount: '', photo: null, photoPreview: null }])}
             className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-border rounded-xl text-sm text-text-secondary font-medium hover:border-primary/30 hover:text-primary transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
@@ -869,7 +834,7 @@ export default function VerifyPage() {
           onClick={handleVerify}
           loading={submitting}
           disabled={
-            (selectedRoutine.verification_type === 'photo' && !photo)
+            selectedRoutine.verification_type === 'photo' && !blocks[0]?.photo
           }
         >
           {isAlreadyVerifiedToday && !isDevMode ? '추가 인증하기' : '인증 완료'}
