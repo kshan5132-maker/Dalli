@@ -13,7 +13,7 @@ import ErrorRetry from '@/components/ErrorRetry'
 import { GroupDetailSkeleton } from '@/components/Skeleton'
 import Input from '@/components/Input'
 import type { Group, GroupMember, Routine, Verification, Message, Profile, VerificationReaction } from '@/lib/types'
-import { FREQUENCY_TARGETS, EXERCISE_TYPE_LABELS } from '@/lib/types'
+import { FREQUENCY_TARGETS, EXERCISE_TYPE_LABELS, getExerciseList } from '@/lib/types'
 import { getWeekRange, getWeekRangeOffset, formatDate } from '@/lib/utils'
 
 type TabType = 'feed' | 'members' | 'mission' | 'chat'
@@ -578,8 +578,9 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
   const getShareText = (v: Verification & { profiles: Profile; routines: Routine }) => {
     const nickname = v.profiles?.nickname || '알 수 없음'
     const routineTitle = v.routines?.title || '루틴'
-    const exerciseInfo = v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type]
-      ? ` (${EXERCISE_TYPE_LABELS[v.exercise_type]}${v.exercise_amount ? ` ${v.exercise_amount}` : ''})`
+    const exerciseEntries = getExerciseList(v)
+    const exerciseInfo = exerciseEntries.length > 0
+      ? ` (${exerciseEntries.map(e => `${EXERCISE_TYPE_LABELS[e.type] || e.type}${e.amount ? ` ${e.amount}` : ''}`).join(', ')})`
       : ''
     return `${nickname}님이 "${routineTitle}"${exerciseInfo}을 인증했어요!`
   }
@@ -876,10 +877,9 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                             {v.routines?.title || '루틴'}
                           </span>
                           을 인증했습니다
-                          {v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type] && (
+                          {getExerciseList(v).length > 0 && (
                             <span className="ml-1 text-secondary">
-                              · {EXERCISE_TYPE_LABELS[v.exercise_type]}
-                              {v.exercise_amount && ` ${v.exercise_amount}`}
+                              · {getExerciseList(v).map(e => `${EXERCISE_TYPE_LABELS[e.type] || e.type}${e.amount ? ` ${e.amount}` : ''}`).join(', ')}
                             </span>
                           )}
                         </p>
@@ -1690,10 +1690,9 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                         <p className="text-xs font-semibold truncate">{v.routines?.title || '루틴'}</p>
                         <p className="text-[10px] text-text-muted">
                           {formatDate(v.verified_at)}
-                          {v.exercise_type && EXERCISE_TYPE_LABELS[v.exercise_type] && (
+                          {getExerciseList(v).length > 0 && (
                             <span className="ml-1 text-secondary">
-                              · {EXERCISE_TYPE_LABELS[v.exercise_type]}
-                              {v.exercise_amount && ` ${v.exercise_amount}`}
+                              · {getExerciseList(v).map(e => `${EXERCISE_TYPE_LABELS[e.type] || e.type}${e.amount ? ` ${e.amount}` : ''}`).join(', ')}
                             </span>
                           )}
                         </p>

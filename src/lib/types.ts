@@ -43,6 +43,11 @@ export type GroupMember = {
   profiles?: Profile
 }
 
+export type ExerciseEntry = {
+  type: string
+  amount: string
+}
+
 export type Verification = {
   id: string
   routine_id: string
@@ -52,9 +57,17 @@ export type Verification = {
   memo: string | null
   exercise_type: string | null
   exercise_amount: string | null
+  exercises: ExerciseEntry[] | null
   verified_at: string
   profiles?: Profile
   routines?: Routine
+}
+
+/** exercises 배열 우선, 없으면 exercise_type/exercise_amount 폴백 */
+export function getExerciseList(v: Pick<Verification, 'exercises' | 'exercise_type' | 'exercise_amount'>): ExerciseEntry[] {
+  if (v.exercises && v.exercises.length > 0) return v.exercises
+  if (v.exercise_type) return [{ type: v.exercise_type, amount: v.exercise_amount || '' }]
+  return []
 }
 
 export type VerificationReaction = {

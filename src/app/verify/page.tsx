@@ -10,8 +10,8 @@ import Button from '@/components/Button'
 import Card from '@/components/Card'
 import ErrorRetry from '@/components/ErrorRetry'
 import { VerifySkeleton } from '@/components/Skeleton'
-import type { Routine } from '@/lib/types'
-import { FREQUENCY_LABELS, FREQUENCY_TARGETS, VERIFICATION_TYPE_LABELS, EXERCISE_TYPES } from '@/lib/types'
+import type { Routine, ExerciseEntry } from '@/lib/types'
+import { FREQUENCY_LABELS, FREQUENCY_TARGETS, VERIFICATION_TYPE_LABELS, EXERCISE_TYPES, EXERCISE_TYPE_LABELS } from '@/lib/types'
 import { getWeekRange } from '@/lib/utils'
 
 type TabType = 'personal' | 'group'
@@ -36,8 +36,7 @@ export default function VerifyPage() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [memo, setMemo] = useState('')
-  const [exerciseType, setExerciseType] = useState('')
-  const [exerciseAmount, setExerciseAmount] = useState('')
+  const [exercises, setExercises] = useState<ExerciseEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -290,6 +289,7 @@ export default function VerifyPage() {
       }
 
       // Save verification record
+      const validExercises = exercises.filter(e => e.type)
       const isAlreadyVerified = todayVerified.has(selectedRoutine.id)
       const { error: verifyError } = await supabase.from('verifications').insert({
         routine_id: selectedRoutine.id,
@@ -297,8 +297,11 @@ export default function VerifyPage() {
         group_id: selectedRoutine.group_id,
         photo_url: photoUrl,
         memo: memo.trim() || null,
-        exercise_type: exerciseType || null,
-        exercise_amount: exerciseAmount.trim() || null,
+        // 하위 호환: 첫 번째 운동을 기존 컬럼에도 저장
+        exercise_type: validExercises[0]?.type || null,
+        exercise_amount: validExercises[0]?.amount?.trim() || null,
+        // 새로운 다중 운동 배열
+        exercises: validExercises.length > 0 ? validExercises : null,
       })
 
       if (verifyError) {
@@ -346,8 +349,7 @@ export default function VerifyPage() {
     setPhoto(null)
     setPhotoPreview(null)
     setMemo('')
-    setExerciseType('')
-    setExerciseAmount('')
+    setExercises([])
     setStreak(0)
     if (user) loadData(user.id)
   }
@@ -611,8 +613,7 @@ export default function VerifyPage() {
               setPhoto(null)
               setPhotoPreview(null)
               setMemo('')
-              setExerciseType('')
-              setExerciseAmount('')
+              setExercises([])
             }}
             className="text-sm text-text-secondary"
           >
@@ -791,32 +792,64 @@ export default function VerifyPage() {
           </Card>
         )}
 
-        {/* Exercise type & amount */}
+        {/* Exercise entries - 다중 운동 추가 */}
         <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium text-text mb-1.5">운동 종류</label>
-            <select
-              value={exerciseType}
-              onChange={(e) => setExerciseType(e.target.value)}
-              className="w-full px-4 py-3 bg-bg border border-border rounded-xl text-sm text-text focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors appearance-none"
-            >
-              {EXERCISE_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-text">운동 기록</label>
+            {exercises.length > 0 && (
+              <span className="text-xs text-text-muted">{exercises.length}개</span>
+            )}
           </div>
-          {exerciseType && (
-            <div>
-              <label className="block text-sm font-medium text-text mb-1.5">운동량 (선택사항)</label>
-              <input
-                type="text"
-                value={exerciseAmount}
-                onChange={(e) => setExerciseAmount(e.target.value)}
-                placeholder="예: 30분, 5km, 3세트"
-                className="w-full px-4 py-3 bg-bg border border-border rounded-xl text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
-              />
+
+          {exercises.map((exercise, index) => (
+            <div key={index} className="flex items-start gap-2 p-3 bg-bg rounded-xl border border-border">
+              <div className="flex-1 space-y-2">
+                <select
+                  value={exercise.type}
+                  onChange={(e) => {
+                    const updated = [...exercises]
+                    updated[index] = { ...updated[index], type: e.target.value }
+                    setExercises(updated)
+                  }}
+                  className="w-full px-3 py-2.5 bg-bg-card border border-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors appearance-none"
+                >
+                  {EXERCISE_TYPES.filter(t => t.value !== '').map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={exercise.amount}
+                  onChange={(e) => {
+                    const updated = [...exercises]
+                    updated[index] = { ...updated[index], amount: e.target.value }
+                    setExercises(updated)
+                  }}
+                  placeholder="운동량 (예: 30분, 5km, 3세트)"
+                  className="w-full px-3 py-2.5 bg-bg-card border border-border rounded-lg text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-colors"
+                />
+              </div>
+              <button
+                onClick={() => setExercises(exercises.filter((_, i) => i !== index))}
+                className="mt-1 w-8 h-8 flex items-center justify-center text-text-muted hover:text-error rounded-lg hover:bg-error/10 transition-colors shrink-0"
+                aria-label="운동 삭제"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                  <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                </svg>
+              </button>
             </div>
-          )}
+          ))}
+
+          <button
+            onClick={() => setExercises([...exercises, { type: 'weight', amount: '' }])}
+            className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-border rounded-xl text-sm text-text-secondary font-medium hover:border-primary/30 hover:text-primary transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+            </svg>
+            운동 추가하기
+          </button>
         </div>
 
         {/* Memo text field */}

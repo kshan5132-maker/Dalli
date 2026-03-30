@@ -86,6 +86,10 @@ create table verifications (
   user_id uuid references profiles(id) on delete cascade not null,
   group_id uuid references groups(id) on delete cascade,
   photo_url text,
+  memo text,
+  exercise_type text,
+  exercise_amount text,
+  exercises jsonb,
   verified_at timestamptz default now() not null
 );
 

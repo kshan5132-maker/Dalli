@@ -13,6 +13,7 @@ import Modal from '@/components/Modal'
 import Button from '@/components/Button'
 import { DashboardSkeleton } from '@/components/Skeleton'
 import { FREQUENCY_TARGETS, FREQUENCY_LABELS, EXERCISE_TYPE_LABELS } from '@/lib/types'
+import type { ExerciseEntry } from '@/lib/types'
 import { getWeekRange, getMonthRange } from '@/lib/utils'
 import { isDevMode } from '@/lib/fetch'
 
@@ -41,6 +42,7 @@ type MileageVerif = {
   id: string
   exercise_type: string | null
   exercise_amount: string | null
+  exercises: ExerciseEntry[] | null
   memo: string | null
   photo_url: string | null
   verified_at: string
@@ -367,7 +369,7 @@ export default function DashboardPage() {
 
       const { data } = await supabase
         .from('verifications')
-        .select('id, exercise_type, exercise_amount, memo, photo_url, verified_at, routines(title)')
+        .select('id, exercise_type, exercise_amount, exercises, memo, photo_url, verified_at, routines(title)')
         .eq('user_id', uid)
         .gte('verified_at', start.toISOString())
         .lte('verified_at', end.toISOString())
@@ -407,16 +409,26 @@ export default function DashboardPage() {
     return { start: mon, end: sun }
   }
 
+  /** MileageVerif에서 exercises 배열 우선, 없으면 exercise_type/amount 폴백 */
+  const getMileageExerciseList = (v: MileageVerif): ExerciseEntry[] => {
+    if (v.exercises && v.exercises.length > 0) return v.exercises
+    if (v.exercise_type) return [{ type: v.exercise_type, amount: v.exercise_amount || '' }]
+    return []
+  }
+
   const getExerciseBreakdown = (verifs: MileageVerif[]) => {
     const map: Record<string, { count: number; totalAmount: number }> = {}
     verifs.forEach(v => {
-      if (!v.exercise_type) return
-      if (!map[v.exercise_type]) map[v.exercise_type] = { count: 0, totalAmount: 0 }
-      map[v.exercise_type].count++
-      if (v.exercise_amount) {
-        const parsed = parseFloat(v.exercise_amount)
-        if (!isNaN(parsed)) map[v.exercise_type].totalAmount += parsed
-      }
+      const entries = getMileageExerciseList(v)
+      entries.forEach(e => {
+        if (!e.type) return
+        if (!map[e.type]) map[e.type] = { count: 0, totalAmount: 0 }
+        map[e.type].count++
+        if (e.amount) {
+          const parsed = parseFloat(e.amount)
+          if (!isNaN(parsed)) map[e.type].totalAmount += parsed
+        }
+      })
     })
     return Object.entries(map).map(([type, data]) => ({
       type,
@@ -662,8 +674,9 @@ export default function DashboardPage() {
                     const time = new Date(v.verified_at)
                     const hh = time.getHours().toString().padStart(2, '0')
                     const mm = time.getMinutes().toString().padStart(2, '0')
-                    const icon = v.exercise_type ? (EXERCISE_ICONS[v.exercise_type] || '\uD83D\uDCAA') : '\u2705'
-                    const typeLabel = v.exercise_type ? (EXERCISE_TYPE_LABELS[v.exercise_type] || v.exercise_type) : '체크 인증'
+                    const exerciseEntries = getMileageExerciseList(v)
+                    const firstExercise = exerciseEntries[0]
+                    const icon = firstExercise ? (EXERCISE_ICONS[firstExercise.type] || '\uD83D\uDCAA') : '\u2705'
 
                     return (
                       <Card key={v.id}>
@@ -671,10 +684,18 @@ export default function DashboardPage() {
                           <div className="flex items-start gap-2 flex-1 min-w-0">
                             <span className="text-lg shrink-0">{icon}</span>
                             <div className="min-w-0">
-                              <p className="text-sm font-semibold">
-                                {typeLabel}
-                                {v.exercise_amount && <span className="text-text-muted font-normal ml-1.5">{v.exercise_amount}</span>}
-                              </p>
+                              {exerciseEntries.length === 0 ? (
+                                <p className="text-sm font-semibold">체크 인증</p>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  {exerciseEntries.map((e, i) => (
+                                    <p key={i} className="text-sm font-semibold">
+                                      {EXERCISE_TYPE_LABELS[e.type] || e.type}
+                                      {e.amount && <span className="text-text-muted font-normal ml-1.5">{e.amount}</span>}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
                               {v.routines?.title && (
                                 <p className="text-xs text-text-muted truncate">{v.routines.title}</p>
                               )}
