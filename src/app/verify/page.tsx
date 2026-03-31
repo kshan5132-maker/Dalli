@@ -298,15 +298,21 @@ export default function VerifyPage() {
         exercise_amount: firstExercise?.amount?.trim() || null,
       }
 
-      // exercises 컬럼 포함 시도, 실패 시 없이 재시도 (DB 마이그레이션 전 호환)
+      // exercises 컬럼 포함 시도, 컬럼 미존재 에러일 때만 없이 재시도
       const { error: verifyError } = await supabase.from('verifications').insert({
         ...baseData,
         exercises: exercisesData.length > 0 ? exercisesData : null,
       })
 
       if (verifyError) {
-        const { error: retryError } = await supabase.from('verifications').insert(baseData)
-        if (retryError) {
+        const isColumnMissing = verifyError.message?.includes('exercises') || verifyError.code === '42703'
+        if (isColumnMissing) {
+          const { error: retryError } = await supabase.from('verifications').insert(baseData)
+          if (retryError) {
+            alert('인증 저장에 실패했습니다.')
+            return
+          }
+        } else {
           alert('인증 저장에 실패했습니다.')
           return
         }

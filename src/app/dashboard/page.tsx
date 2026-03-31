@@ -367,7 +367,8 @@ export default function DashboardPage() {
       const start = new Date(year, month, 1)
       const end = new Date(year, month + 1, 0, 23, 59, 59, 999)
 
-      const { data } = await supabase
+      // exercises 컬럼 포함 쿼리 시도, 컬럼 미존재 시 없이 재시도
+      const { data, error: qError } = await supabase
         .from('verifications')
         .select('id, exercise_type, exercise_amount, exercises, memo, photo_url, verified_at, routines(title)')
         .eq('user_id', uid)
@@ -375,7 +376,18 @@ export default function DashboardPage() {
         .lte('verified_at', end.toISOString())
         .order('verified_at', { ascending: false })
 
-      setMileageVerifs((data || []) as unknown as MileageVerif[])
+      if (qError) {
+        const { data: fallbackData } = await supabase
+          .from('verifications')
+          .select('id, exercise_type, exercise_amount, memo, photo_url, verified_at, routines(title)')
+          .eq('user_id', uid)
+          .gte('verified_at', start.toISOString())
+          .lte('verified_at', end.toISOString())
+          .order('verified_at', { ascending: false })
+        setMileageVerifs((fallbackData || []) as unknown as MileageVerif[])
+      } else {
+        setMileageVerifs((data || []) as unknown as MileageVerif[])
+      }
     } catch (err) {
       console.error('[Dalli] [Mileage] 로드 실패:', err)
     } finally {
