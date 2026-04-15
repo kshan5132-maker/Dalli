@@ -404,7 +404,7 @@ export default function RoutineDetailPage({ params }: { params: Promise<{ id: st
             <Button
               variant="outline"
               size="lg"
-              onClick={() => router.push('/routine')}
+              onClick={() => router.push(`/routine/${id}/settings`)}
               className="shrink-0"
             >
               설정 변경
